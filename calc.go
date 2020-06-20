@@ -1,9 +1,10 @@
 package decimal
 
 import (
-	"decimal/internal/platform"
 	"math"
 	"unsafe"
+
+	"github.com/klokare/decimal/internal/platform"
 )
 
 // Constants ...

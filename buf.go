@@ -1,8 +1,9 @@
 package decimal
 
 import (
-	"decimal/internal/platform"
 	"unsafe"
+
+	"github.com/klokare/decimal/internal/platform"
 )
 
 // buf12 ...

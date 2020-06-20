@@ -2,7 +2,6 @@ package decimal
 
 import (
 	"bytes"
-	"decimal/internal/platform"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -11,6 +10,8 @@ import (
 	"strconv"
 	"strings"
 	"unsafe"
+
+	"github.com/klokare/decimal/internal/platform"
 )
 
 // RoundingMode ...

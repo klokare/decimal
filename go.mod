@@ -1,4 +1,4 @@
-module decimal
+module github.com/klokare/decimal
 
 go 1.13
 
