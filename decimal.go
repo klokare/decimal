@@ -326,6 +326,10 @@ func (d *Decimal) Scan(src interface{}) error {
 		tmp, err := Parse(src.(string))
 		*d = tmp
 		return err
+	case []byte:
+		tmp, err := Parse(string(src.([]byte)))
+		*d = tmp
+		return err
 	default:
 		return fmt.Errorf("cannot create decimal from %v", t)
 	}
