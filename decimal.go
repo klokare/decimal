@@ -475,7 +475,7 @@ func (d *Decimal) UnmarshalBinary(data []byte) (err error) {
 }
 
 // Value provides a string value to the database.
-func (d *NullDecimal) Value() (driver.Value, error) {
+func (d Decimal) Value() (driver.Value, error) {
 	return d.String(), nil
 }
 
