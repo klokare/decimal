@@ -105,6 +105,8 @@ func parseString(value string, number *buffer) bool {
 			goto Scientific
 		case ' ', '\t', '\n':
 			// ignore white space
+		case '"', '\'':
+			// ignore quotes
 		default:
 			if c >= '0' && c <= '9' {
 				state |= StateDigits
@@ -340,7 +342,7 @@ func decimalToNumber(d Decimal, number *buffer) {
 
 	var i int32 = int32(sb.Len())
 	number.DigitsCount = i
-	number.Scale = i - int32(d.Scale())
+	number.Scale = i - int32(d.scale())
 
 	number.Digits = make([]byte, i+1)
 	copy(number.Digits, []byte(reverseString(sb)))

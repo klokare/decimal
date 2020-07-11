@@ -1578,7 +1578,7 @@ func varR8FromDec(value Decimal) float64 {
 	// Value taken via reverse engineering the double that corresponds to 2^64. (oleaut32 has ds2to64 = DEFDS(0, 0, DBLBIAS + 65, 0))
 	const ds2to64 float64 = 1.8446744073709552e+019
 
-	var dbl float64 = (float64(value.low64()) + float64(value.high)*ds2to64) / sDoublePowers10[value.Scale()]
+	var dbl float64 = (float64(value.low64()) + float64(value.high)*ds2to64) / sDoublePowers10[value.scale()]
 
 	if value.IsNegative() {
 		dbl = -dbl

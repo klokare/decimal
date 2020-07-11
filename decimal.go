@@ -2,6 +2,7 @@ package decimal
 
 import (
 	"bytes"
+	"database/sql/driver"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -62,8 +63,8 @@ func (d *Decimal) setLow64(value uint64) {
 	d.low = (uint32(value))
 }
 
-// Scale ...
-func (d Decimal) Scale() int { return int(byte(d.flags >> scaleShift)) }
+// scale ...
+func (d Decimal) scale() int { return int(byte(d.flags >> scaleShift)) }
 
 // NewFromInt32 constructs a Decimal from an int32 value.
 func NewFromInt32(value int32) Decimal {
@@ -147,6 +148,17 @@ func (d Decimal) Add(value Decimal) Decimal {
 func (d Decimal) Ceil() Decimal {
 	if (d.flags & scaleMask) != 0 {
 		internalRound(&d, uint32(byte(d.flags>>scaleShift)), Ceiling)
+	}
+	return d
+}
+
+// Clamp returns a value clamped to the inclusive range of min and max.
+func (d Decimal) Clamp(min, max Decimal) Decimal {
+	if d.LessThan(min) {
+		d = min
+	}
+	if d.GreaterThan(max) {
+		d = max
 	}
 	return d
 }
@@ -288,14 +300,38 @@ func (d Decimal) Round(decimals int32, mode RoundingMode) Decimal {
 		panic("invalid rounding mode")
 	}
 
-	var scale int32 = int32(d.Scale()) - decimals
+	var scale int32 = int32(d.scale()) - decimals
 	if scale > 0 {
 		internalRound(&d, uint32(scale), mode)
 	}
 	return d
 }
 
-// Sign ...
+// Scan assigns value from a database driver.
+func (d *Decimal) Scan(src interface{}) error {
+	switch t := src.(type) {
+	case int32:
+		*d = NewFromInt32(src.(int32))
+		return nil
+	case int64:
+		*d = NewFromInt64(src.(int64))
+		return nil
+	case float32:
+		*d = NewFromFloat32(src.(float32))
+		return nil
+	case float64:
+		*d = NewFromFloat64(src.(float64))
+		return nil
+	case string:
+		tmp, err := Parse(src.(string))
+		*d = tmp
+		return err
+	default:
+		return fmt.Errorf("cannot create decimal from %v", t)
+	}
+}
+
+// Sign returns an int that indicates the sign of the decimal.
 func (d Decimal) Sign() int {
 	if (d.low | d.mid | d.high) == 0 {
 		return 0
@@ -438,6 +474,11 @@ func (d *Decimal) UnmarshalBinary(data []byte) (err error) {
 	return nil
 }
 
+// Value provides a string value to the database.
+func (d *NullDecimal) Value() (driver.Value, error) {
+	return d.String(), nil
+}
+
 // -- package functions
 
 // Random returns a random decimal value using the given generator.
@@ -533,10 +574,12 @@ func Median(values ...Decimal) Decimal {
 	case 1:
 		return values[0]
 	default:
-		sort.Slice(values, func(i, j int) bool { return values[i].LessThan(values[j]) })
+		tmp := make([]Decimal, len(values))
+		copy(tmp, values)
+		sort.Slice(tmp, func(i, j int) bool { return tmp[i].LessThan(tmp[j]) })
 		if n%2 == 0 {
-			return values[n/2].Add(values[n/2+1]).Div(Two)
+			return tmp[n/2].Add(tmp[n/2+1]).Div(Two)
 		}
-		return values[n/2]
+		return tmp[n/2]
 	}
 }
