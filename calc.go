@@ -774,7 +774,7 @@ func decAddSub(d1, d2 *Decimal, sign bool) {
 				if sign {
 					signFlags ^= signMask
 				}
-				d1 = d2
+				*d1 = *d2
 				d1.flags = (d2.flags&scaleMask | signFlags)
 				return
 			}
