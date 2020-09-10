@@ -269,6 +269,15 @@ func (d Decimal) MarshalBinary() (data []byte, err error) {
 	return
 }
 
+// MarshalJSON returns the decimal as a text string without quotes
+func (d Decimal) MarshalJSON() ([]byte, error) { return d.MarshalText() }
+
+// MarshalText encodes the receiver into UTF-8-encoded text and returns the result.
+func (d Decimal) MarshalText() (text []byte, err error) {
+	text = []byte(d.String())
+	return text, nil
+}
+
 // Mul multiplies two Decimal values
 func (d Decimal) Mul(value Decimal) Decimal {
 	varDecMul(&d, &value)
@@ -476,6 +485,18 @@ func (d *Decimal) UnmarshalBinary(data []byte) (err error) {
 	d.low = binary.BigEndian.Uint32(data[8:12])
 	d.flags = binary.BigEndian.Uint32(data[12:16])
 	return nil
+}
+
+// UnmarshalJSON unmarshals the JSON value, ignoring quotes
+func (d *Decimal) UnmarshalJSON(text []byte) error {
+	return d.UnmarshalText(text)
+
+}
+
+// UnmarshalText unmarshals the decimal from the provided text.
+func (d *Decimal) UnmarshalText(text []byte) (err error) {
+	*d, err = Parse(string(text))
+	return err
 }
 
 // Value provides a string value to the database.
