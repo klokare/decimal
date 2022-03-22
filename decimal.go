@@ -262,11 +262,19 @@ func (d Decimal) IsZero() bool { return (d.low | d.mid | d.high) == 0 }
 // encoding is in Big Endian form for portability. flags are placed in the last 4 bytes.
 func (d Decimal) MarshalBinary() (data []byte, err error) {
 	data = make([]byte, 16)
+	err = d.MarshalBinaryTo(data)
+	return data, err
+}
+
+func (d Decimal) MarshalBinaryTo(data []byte) error {
+	if len(data) != 16 {
+		return errors.New("marshal to byte array only allowed when length 16")
+	}
 	binary.BigEndian.PutUint32(data[0:4], d.high)
 	binary.BigEndian.PutUint32(data[4:8], d.mid)
 	binary.BigEndian.PutUint32(data[8:12], d.low)
 	binary.BigEndian.PutUint32(data[12:16], d.flags)
-	return
+	return nil
 }
 
 // MarshalJSON returns the decimal as a text string without quotes
