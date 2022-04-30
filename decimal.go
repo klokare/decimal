@@ -267,7 +267,7 @@ func (d Decimal) MarshalBinary() (data []byte, err error) {
 }
 
 func (d Decimal) MarshalBinaryTo(data []byte) error {
-	if len(data) != 16 {
+	if len(data) < 16 {
 		return errors.New("marshal to byte array only allowed when length 16")
 	}
 	binary.BigEndian.PutUint32(data[0:4], d.high)
