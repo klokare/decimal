@@ -2,7 +2,6 @@ package decimal
 
 import (
 	"bytes"
-	"database/sql/driver"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -505,11 +504,6 @@ func (d *Decimal) UnmarshalJSON(text []byte) error {
 func (d *Decimal) UnmarshalText(text []byte) (err error) {
 	*d, err = Parse(string(text))
 	return err
-}
-
-// Value provides a string value to the database.
-func (d Decimal) Value() (driver.Value, error) {
-	return d.String(), nil
 }
 
 // -- package functions

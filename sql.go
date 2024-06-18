@@ -1,5 +1,7 @@
 package decimal
 
+import "database/sql/driver"
+
 // NullDecimal ...
 type NullDecimal struct {
 	Decimal
@@ -15,4 +17,12 @@ func (d *NullDecimal) Scan(value interface{}) error {
 	err := (&d.Decimal).Scan(value)
 	d.Valid = err == nil
 	return err
+}
+
+// Value provides a string value to the database.
+func (d NullDecimal) Value() (driver.Value, error) {
+	if !d.Valid {
+		return nil, nil
+	}
+	return d.String(), nil
 }
