@@ -2,6 +2,7 @@ package decimal
 
 import (
 	"bytes"
+	"database/sql/driver"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -321,6 +322,11 @@ func (d Decimal) Round(decimals int32, mode RoundingMode) Decimal {
 		internalRound(&d, uint32(scale), mode)
 	}
 	return d
+}
+
+// Value provides a string value to the database.
+func (d Decimal) Value() (driver.Value, error) {
+	return d.String(), nil
 }
 
 // Scan assigns value from a database driver.
