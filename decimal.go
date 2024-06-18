@@ -323,34 +323,6 @@ func (d Decimal) Round(decimals int32, mode RoundingMode) Decimal {
 	return d
 }
 
-// Scan assigns value from a database driver.
-func (d *Decimal) Scan(src interface{}) error {
-	switch t := src.(type) {
-	case int32:
-		*d = NewFromInt32(src.(int32))
-		return nil
-	case int64:
-		*d = NewFromInt64(src.(int64))
-		return nil
-	case float32:
-		*d = NewFromFloat32(src.(float32))
-		return nil
-	case float64:
-		*d = NewFromFloat64(src.(float64))
-		return nil
-	case string:
-		tmp, err := Parse(src.(string))
-		*d = tmp
-		return err
-	case []byte:
-		tmp, err := Parse(string(src.([]byte)))
-		*d = tmp
-		return err
-	default:
-		return fmt.Errorf("cannot create decimal from %v", t)
-	}
-}
-
 // Sign returns an int that indicates the sign of the decimal.
 func (d Decimal) Sign() int {
 	if (d.low | d.mid | d.high) == 0 {
