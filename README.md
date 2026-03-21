@@ -1,1 +1,3 @@
-Port of open-source C# version of Decimal to Go.
+# Decimal
+
+Port of [mono](https://github.com/mono/mono) C# version of Decimal to Go. 
