@@ -174,19 +174,21 @@ func div96ByConst(high64 *uint64, low *uint32, pow uint32) bool {
 func calcUnscale(low *uint32, high64 *uint64, scale *int32) {
 	// Since 10 = 2 * 5, there must be a factor of 2 for every power of 10 we can extract.
 	// We use this as a quick test on whether to try a given power.
+	// Each guard is >=, not >: with > the final power can never be divided out,
+	// which leaves every result carrying one trailing zero more than .NET does.
 	for byte(*low) == 0 && *scale >= 8 && div96ByConst(high64, low, 100000000) {
 		*scale -= 8
 	}
 
-	if (*low&0xF) == 0 && *scale > 4 && div96ByConst(high64, low, 10000) {
+	if (*low&0xF) == 0 && *scale >= 4 && div96ByConst(high64, low, 10000) {
 		*scale -= 4
 	}
 
-	if (*low&3) == 0 && *scale > 2 && div96ByConst(high64, low, 100) {
+	if (*low&3) == 0 && *scale >= 2 && div96ByConst(high64, low, 100) {
 		*scale -= 2
 	}
 
-	if (*low&1) == 0 && *scale > 1 && div96ByConst(high64, low, 10) {
+	if (*low&1) == 0 && *scale >= 1 && div96ByConst(high64, low, 10) {
 		*scale--
 	}
 }
@@ -307,9 +309,15 @@ func div128By96(bufNum *buf16, bufDen *buf12) uint32 {
 		remainder += den
 
 		if num < prod1 {
-			// Detected carry. Check for carry out of top
-			// before adding it in.
-			if remainder++; remainder < den {
+			// Detected carry. Check for carry out of top before adding it in.
+			//
+			// The C# reads `if (remainder++ < den) break;` -- a post-increment, so
+			// the comparison sees the value from before the bump. Writing this as
+			// `remainder++; if remainder < den` tests the wrong value and lets the
+			// loop run forever.
+			prev := remainder
+			remainder++
+			if prev < den {
 				break
 			}
 		}
@@ -693,7 +701,11 @@ func decAddSub(d1, d2 *Decimal, sign bool) {
 		if low64 <= math.MaxUint32 {
 			if uint32(low64) == 0 {
 				// Left arg is zero, return right.
-				var signFlags uint32 = flags & scaleMask
+				//
+				// flags carries the scale of the smaller operand and the sign of
+				// the larger, so the sign has to be taken with signMask here. The
+				// scale comes from d2 on the line below.
+				var signFlags uint32 = flags & signMask
 				if sign {
 					signFlags ^= signMask
 				}
@@ -1634,6 +1646,7 @@ func varDecDiv(d1, d2 *Decimal) {
 						}
 						goto HaveScale64
 					}
+					break
 				}
 
 				// We need to unscale if and only if we have a non-zero remainder
@@ -1689,7 +1702,9 @@ func varDecDiv(d1, d2 *Decimal) {
 			bufQuo.SetLow64(uint64(div128By96(bufRem, bufDivisor)))
 
 			for {
-				if (bufRem.Low64() | uint64(bufRem.U2)) == 0 { // TODO Check. C# does not cast Low64
+				// C# writes this as `(bufRem.Low64 | bufRem.U2) == 0`; the cast is
+				// implicit there because uint widens to ulong in a binary or.
+				if (bufRem.Low64() | uint64(bufRem.U2)) == 0 {
 					if scale < 0 {
 						if -scale < 9 {
 							curScale = -scale

@@ -2,3 +2,4 @@
 internal/.DS_Store
 .DS_Store
 .vscode/launch.json
+coverage.out
