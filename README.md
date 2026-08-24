@@ -50,11 +50,14 @@ need unbounded range or more than 28 digits.
 ```
 BenchmarkAdd       2.3 ns/op    0 allocs/op
 BenchmarkSub       2.1 ns/op    0 allocs/op
-BenchmarkMul      11.7 ns/op    0 allocs/op
+BenchmarkMul      11.6 ns/op    0 allocs/op
 BenchmarkDiv      33.3 ns/op    0 allocs/op
-BenchmarkCmp       2.5 ns/op    0 allocs/op
-BenchmarkRound     6.9 ns/op    0 allocs/op
+BenchmarkCmp       2.6 ns/op    0 allocs/op
+BenchmarkRound     7.0 ns/op    0 allocs/op
 ```
+
+<sub>Apple M3 Pro, Go 1.25.5, darwin/arm64. Run `make bench` for your own figures — the
+absolute numbers move with the machine, the zero allocations do not.</sub>
 
 ## Two things to know up front
 
