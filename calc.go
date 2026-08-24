@@ -120,7 +120,9 @@ func uInt64x64To128(a, b uint64, result *Decimal) {
 
 // div96By32 does full divide, yielding 96-bit result and 32-bit remainder.
 func div96By32(bufNum *buf12, den uint32) uint32 {
-	// TODO: https://github.com/dotnet/coreclr/issues/3439
+	// Upstream note, carried over from the reference: dotnet/coreclr#3439 asks
+	// for a 64/32 divide intrinsic so this need not go through a full 64-bit
+	// division. Nothing to do here -- Go has no such intrinsic either.
 
 	var tmp, div uint64
 	if bufNum.U2 != 0 {
@@ -208,7 +210,9 @@ func div96By64(bufNum *buf12, den uint64) uint32 {
 			return 0
 		}
 
-		// TODO: https://github.com/dotnet/coreclr/issues/3439
+		// Upstream note, carried over from the reference: dotnet/coreclr#3439 asks
+		// for a 64/32 divide intrinsic so this need not go through a full 64-bit
+		// division. Nothing to do here -- Go has no such intrinsic either.
 		quo = uint32(num / den)
 		num -= uint64(quo) * den // remainder
 		bufNum.SetLow64(num)
@@ -241,7 +245,9 @@ func div96By64(bufNum *buf12, den uint64) uint32 {
 		return 0
 	}
 
-	// TODO: https://github.com/dotnet/coreclr/issues/3439
+	// Upstream note, carried over from the reference: dotnet/coreclr#3439 asks
+	// for a 64/32 divide intrinsic so this need not go through a full 64-bit
+	// division. Nothing to do here -- Go has no such intrinsic either.
 	quo = uint32(num64 / uint64(denHigh32))
 	num = uint64(bufNum.U0) | ((num64 - uint64(quo)*uint64(denHigh32)) << 32) // remainder
 
@@ -275,7 +281,9 @@ func div128By96(bufNum *buf16, bufDen *buf12) uint32 {
 		return 0
 	}
 
-	// TODO: https://github.com/dotnet/coreclr/issues/3439
+	// Upstream note, carried over from the reference: dotnet/coreclr#3439 asks
+	// for a 64/32 divide intrinsic so this need not go through a full 64-bit
+	// division. Nothing to do here -- Go has no such intrinsic either.
 	var quo uint32 = uint32(dividend / uint64(den))
 	var remainder uint32 = uint32(dividend) - quo*den
 
@@ -1063,7 +1071,9 @@ func varDecMul(d1, d2 *Decimal) {
 				scale -= decScaleMax + 1
 				var power uint64 = sUlongPowers10[scale]
 
-				// TODO: https://github.com/dotnet/coreclr/issues/3439
+				// Upstream note, carried over from the reference: dotnet/coreclr#3439 asks
+				// for a 64/32 divide intrinsic so this need not go through a full 64-bit
+				// division. Nothing to do here -- Go has no such intrinsic either.
 				tmp = low64 / power
 				var remainder uint64 = low64 - tmp*power
 				low64 = tmp
@@ -1600,7 +1610,9 @@ func varDecDiv(d1, d2 *Decimal) {
 			}
 
 			var num uint64 = uInt32x32To64(remainder, power)
-			// TODO: https://github.com/dotnet/coreclr/issues/3439
+			// Upstream note, carried over from the reference: dotnet/coreclr#3439 asks
+			// for a 64/32 divide intrinsic so this need not go through a full 64-bit
+			// division. Nothing to do here -- Go has no such intrinsic either.
 			var div uint32 = uint32(num / uint64(den))
 			remainder = uint32(num) - div*den
 
@@ -2019,7 +2031,9 @@ func internalRound(d *Decimal, scale uint32, mode RoundingMode) {
 
 	{
 		power = sPowers10[scale]
-		// TODO: https://github.com/dotnet/coreclr/issues/3439
+		// Upstream note, carried over from the reference: dotnet/coreclr#3439 asks
+		// for a 64/32 divide intrinsic so this need not go through a full 64-bit
+		// division. Nothing to do here -- Go has no such intrinsic either.
 		var n uint32 = d.high
 		if n == 0 {
 			var tmp uint64 = d.low64()
