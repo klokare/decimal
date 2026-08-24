@@ -13,7 +13,7 @@ go get github.com/klokare/decimal/v2
 
 ### Bugs fixed
 
-Eleven defects, most of which produced silently wrong answers rather than failing.
+Fifteen defects, most of which produced silently wrong answers rather than failing.
 
 **Arithmetic**
 
