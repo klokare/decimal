@@ -39,26 +39,27 @@ const (
 	// AllowCurrencySymbol permits the culture's currency symbol.
 	AllowCurrencySymbol
 
-	// None accepts digits only.
-	None Styles = 0
-	// Integer is AllowLeadingWhite | AllowTrailingWhite | AllowLeadingSign.
-	Integer = AllowLeadingWhite | AllowTrailingWhite | AllowLeadingSign
-	// Number adds a trailing sign, a decimal point and group separators.
-	Number = Integer | AllowTrailingSign | AllowDecimalPoint | AllowThousands
-	// Float adds an exponent but, like .NET, drops group separators.
-	Float = AllowLeadingWhite | AllowTrailingWhite | AllowLeadingSign | AllowDecimalPoint | AllowExponent
-	// Currency adds parentheses and the currency symbol.
-	Currency = Number | AllowParentheses | AllowCurrencySymbol
-	// Any accepts everything this package understands.
-	Any = Currency | AllowExponent
+	// StyleNone accepts digits only.
+	StyleNone Styles = 0
+	// StyleInteger is AllowLeadingWhite | AllowTrailingWhite | AllowLeadingSign.
+	StyleInteger = AllowLeadingWhite | AllowTrailingWhite | AllowLeadingSign
+	// StyleNumber adds a trailing sign, a decimal point and group separators.
+	// It is what [Parse] uses, matching .NET's NumberStyles.Number.
+	StyleNumber = StyleInteger | AllowTrailingSign | AllowDecimalPoint | AllowThousands
+	// StyleFloat adds an exponent but, like .NET, drops group separators.
+	StyleFloat = AllowLeadingWhite | AllowTrailingWhite | AllowLeadingSign | AllowDecimalPoint | AllowExponent
+	// StyleCurrency adds parentheses and the currency symbol.
+	StyleCurrency = StyleNumber | AllowParentheses | AllowCurrencySymbol
+	// StyleAny accepts everything this package understands.
+	StyleAny = StyleCurrency | AllowExponent
 )
 
-// Parse converts a string to a Decimal using [Number] and [Invariant]. That
+// Parse converts a string to a Decimal using [StyleNumber] and [Invariant]. That
 // accepts an optional sign, digits with optional group separators, and an
 // optional fractional part -- but not scientific notation. Use [ParseStyle]
-// with [Float] or [Any] for that.
+// with [StyleFloat] or [StyleAny] for that.
 func Parse(s string) (Decimal, error) {
-	return ParseStyle(s, Number, Invariant)
+	return ParseStyle(s, StyleNumber, Invariant)
 }
 
 // MustParse is [Parse] with the error turned into a panic. It suits literals

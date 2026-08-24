@@ -1,6 +1,7 @@
 package decimal
 
 import (
+	"fmt"
 	"math"
 	"unsafe"
 )
@@ -111,7 +112,7 @@ func uInt64x64To128(a, b uint64, result *Decimal) {
 	}
 
 	if high > math.MaxUint32 {
-		panic("decimal overflow exception")
+		panic(ErrOverflow)
 	}
 	result.setLow64(low)
 	result.high = uint32(high)
@@ -387,7 +388,7 @@ func scaleResult(bufRes *buf24, hiRes uint32, scale int32) int32 {
 		// current scale of the result, we'll overflow.
 		//
 		if newScale > scale {
-			panic("decimal overflow exception")
+			panic(ErrOverflow)
 		}
 	}
 
@@ -447,7 +448,7 @@ func scaleResult(bufRes *buf24, hiRes uint32, scale int32) int32 {
 			// divide by 10 more.
 			if hiRes > 2 {
 				if scale == 0 {
-					panic("decimal overflow exception")
+					panic(ErrOverflow)
 				}
 				newScale = 1
 				scale--
@@ -469,7 +470,7 @@ func scaleResult(bufRes *buf24, hiRes uint32, scale int32) int32 {
 						// The rounding caused us to carry beyond 96 bits.
 						// Scale by 10 more.
 						if scale == 0 {
-							panic("decimal overflow exception")
+							panic(ErrOverflow)
 						}
 						hiRes = cur
 						sticky = 0    // no sticky bit
@@ -531,7 +532,7 @@ func leadingZeroCount(value uint32) int32 {
 // We need to divide by 10, feed in the high bit to undo the overflow and then round as required.
 func overflowUnscale(bufQuo *buf12, scale int32, sticky bool) int32 {
 	if scale--; scale < 0 {
-		panic("decimal overflow exception")
+		panic(ErrOverflow)
 	}
 
 	// We have overflown, so load the high bit with a one.
@@ -627,7 +628,7 @@ HaveScale:
 	// curScale < 9.  See if this is enough to make scale factor
 	// positive if it isn't already.
 	if curScale+scale < 0 {
-		panic("decimal overflow exception")
+		panic(ErrOverflow)
 	}
 	return curScale
 }
@@ -887,7 +888,7 @@ AlignedScale:
 		// The addition carried above 96 bits.
 		// Divide the value by 10, dropping the scale factor.
 		if (flags & scaleMask) == 0 {
-			panic("decimal overflow exception")
+			panic(ErrOverflow)
 		}
 		flags -= 1 << scaleShift
 
@@ -1245,7 +1246,7 @@ func varDecFromR4(input float32, result *Decimal) {
 	}
 
 	if exp > 96 {
-		panic("decimal overflow exception")
+		panic(ErrOverflow)
 	}
 
 	var flags uint32
@@ -1379,7 +1380,7 @@ func varDecFromR8(input float64, result *Decimal) {
 		return // result should be zeroed out
 	}
 	if exp > 96 {
-		panic("decimal overflow excpetion")
+		panic(ErrOverflow)
 	}
 
 	var flags uint32
@@ -1536,7 +1537,7 @@ func varDecDiv(d1, d2 *Decimal) {
 		// Divisor is only 32 bits. Easy divide.
 		var den uint32 = d2.low
 		if den == 0 {
-			panic("division by zero exception")
+			panic(ErrDivideByZero)
 		}
 
 		bufQuo.SetLow64(d1.low64())
@@ -1786,14 +1787,14 @@ RoundUp:
 	}
 
 ThrowOverflow:
-	panic("decimal overflow exception") // TODO: move this to the actual panic location for better tracing
+	panic(ErrOverflow)
 }
 
 // varDecMod computes the rmeainder between two decimals. On return, d1 contains the result of the
 // operation and d2 is trashed.
 func varDecMod(d1, d2 *Decimal) {
 	if (d2.low | d2.mid | d2.high) == 0 {
-		panic("divide by zero exception")
+		panic(ErrDivideByZero)
 	}
 
 	if (d1.low | d1.mid | d1.high) == 0 {
@@ -2081,7 +2082,7 @@ CheckRemainder:
 			goto Done
 		}
 	default:
-		panic("unknown rounding mode")
+		panic(fmt.Errorf("%w: unknown rounding mode %d", ErrScaleRange, mode))
 	}
 	if d.setLow64(d.low64() + 1); d.low64() == 0 {
 		d.high++

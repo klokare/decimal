@@ -15,7 +15,7 @@ func TestGoldenBinary(t *testing.T) {
 		{"sub", func(a, b Decimal) Decimal { return a.Sub(b) }},
 		{"mul", func(a, b Decimal) Decimal { return a.Mul(b) }},
 		{"div", func(a, b Decimal) Decimal { return a.Div(b) }},
-		{"rem", func(a, b Decimal) Decimal { return a.Rem(b) }},
+		{"rem", func(a, b Decimal) Decimal { return a.Mod(b) }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			golden(t, tc.name, func(t *testing.T, r row) {
@@ -64,7 +64,7 @@ func TestGoldenRound(t *testing.T) {
 			t.Fatalf("%s: unknown rounding mode %q", r, r.fields[3])
 		}
 		var got Decimal
-		rec, panicked := wantPanic(func() { got = a.Round(int32(places), mode) })
+		rec, panicked := wantPanic(func() { got = a.Round(places, mode) })
 		checkDecimal(t, r, got, panicked, rec)
 	})
 }

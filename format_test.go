@@ -113,13 +113,13 @@ func styleFor(t *testing.T, name string) Styles {
 	t.Helper()
 	switch name {
 	case "number":
-		return Number
+		return StyleNumber
 	case "float":
-		return Float
+		return StyleFloat
 	case "any":
-		return Any
+		return StyleAny
 	case "integer":
-		return Integer
+		return StyleInteger
 	default:
 		t.Fatalf("unknown NumberStyles name %q", name)
 		return 0
