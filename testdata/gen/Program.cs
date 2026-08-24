@@ -30,6 +30,7 @@ public static class Program
         Comparisons(small);
         Parsing();
         Formatting(Corpus.Format);
+        NumberFormats();
 
         Console.WriteLine("done");
         return 0;
@@ -363,6 +364,57 @@ public static class Program
         "0.00 %", "$#,##0.00", "#,##0.00 EUR",
         "", "abc", "0000000000000000000000000000000000",
     };
+
+    // ---- culture data ------------------------------------------------------
+
+    /// <summary>
+    /// Dumps the NumberFormatInfo fields the formatter and parser read, so the Go
+    /// defaults are transcribed from the runtime rather than from memory.
+    /// </summary>
+    static void NumberFormats()
+    {
+        using var w = W("numberformat", "value", "culture", "field");
+
+        var cultures = new (string Name, NumberFormatInfo Info)[]
+        {
+            ("invariant", CultureInfo.InvariantCulture.NumberFormat),
+            ("en-US", new CultureInfo("en-US").NumberFormat),
+        };
+
+        foreach (var (cname, f) in cultures)
+        {
+            void S(string field, string v) => w.Row("ok", Writer.Str(v), cname, field);
+            void I(string field, int v) => w.Row("ok", v.ToString(CultureInfo.InvariantCulture), cname, field);
+            void A(string field, int[] v) => w.Row("ok",
+                string.Join(",", v.Select(x => x.ToString(CultureInfo.InvariantCulture))), cname, field);
+
+            S("NumberDecimalSeparator", f.NumberDecimalSeparator);
+            S("NumberGroupSeparator", f.NumberGroupSeparator);
+            A("NumberGroupSizes", f.NumberGroupSizes);
+            I("NumberDecimalDigits", f.NumberDecimalDigits);
+            I("NumberNegativePattern", f.NumberNegativePattern);
+
+            S("NegativeSign", f.NegativeSign);
+            S("PositiveSign", f.PositiveSign);
+
+            S("CurrencySymbol", f.CurrencySymbol);
+            S("CurrencyDecimalSeparator", f.CurrencyDecimalSeparator);
+            S("CurrencyGroupSeparator", f.CurrencyGroupSeparator);
+            A("CurrencyGroupSizes", f.CurrencyGroupSizes);
+            I("CurrencyDecimalDigits", f.CurrencyDecimalDigits);
+            I("CurrencyPositivePattern", f.CurrencyPositivePattern);
+            I("CurrencyNegativePattern", f.CurrencyNegativePattern);
+
+            S("PercentSymbol", f.PercentSymbol);
+            S("PercentDecimalSeparator", f.PercentDecimalSeparator);
+            S("PercentGroupSeparator", f.PercentGroupSeparator);
+            A("PercentGroupSizes", f.PercentGroupSizes);
+            I("PercentDecimalDigits", f.PercentDecimalDigits);
+            I("PercentPositivePattern", f.PercentPositivePattern);
+            I("PercentNegativePattern", f.PercentNegativePattern);
+        }
+        Report("numberformat", w);
+    }
 
     static void Report(string name, Writer w) =>
         Console.WriteLine($"  {name,-20} {w.Count,8} rows");
