@@ -11,8 +11,10 @@ linters:
     - unused
 
   settings:
-    misspell:
-      locale: UK
+    # No locale is set on purpose. Go and .NET both use American spelling, and
+    # Normalize is a required API name; forcing a locale flags those as typos.
+    # Plain misspellings such as "excpetion" -- which this port arrived carrying
+    # in four places -- are caught regardless.
     revive:
       rules:
         - name: exported

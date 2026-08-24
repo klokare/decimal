@@ -68,7 +68,7 @@ func decimalToNumber(d Decimal, number *buffer) {
 	}
 	uint32ToDecChars(sb, d.low, 0)
 
-	var i int32 = int32(sb.Len())
+	i := int32(sb.Len())
 	number.DigitsCount = i
 	number.Scale = i - int32(d.scale())
 
@@ -95,15 +95,15 @@ func parseFormatSpecifier(format string) (fmt byte, digits int32) {
 
 			if len(format) == 2 {
 				// Fast path for symbol and single digit, e.g. "X4"
-				var d int32 = int32(format[1] - '0')
+				d := int32(format[1] - '0')
 				if uint32(d) < 10 {
 					digits = d
 					return c, digits
 				}
 			} else if len(format) == 3 {
 				// Fast path for symbol and double digit, e.g. "F12"
-				var d1 int32 = int32(format[1] - '0')
-				var d2 int32 = int32(format[2] - '0')
+				d1 := int32(format[1] - '0')
+				d2 := int32(format[2] - '0')
 				if uint32(d1) < 10 && uint32(d2) < 10 {
 					digits = d1*10 + d2
 					return c, digits
@@ -122,7 +122,6 @@ func parseFormatSpecifier(format string) (fmt byte, digits int32) {
 			// If we're at the end of the digits rather than having stopped because we hit something
 			// other than a digit or overflowed, return the standard format info.
 			if i == len(format) || format[i] == 0 {
-				digits = n
 				return c, n
 			}
 
@@ -403,7 +402,8 @@ func formatFixed(sb *bytes.Buffer, number *buffer, maxDigits int32, groupSizes [
 			for i := int32(0); i < zeroes; i++ {
 				sb.WriteByte('0')
 			}
-			digPos += zeroes
+			// The reference also advances digPos here, but neither it nor this
+			// port reads the value again, so the store is dropped.
 			maxDigits -= zeroes
 		}
 		for ; maxDigits > 0; maxDigits-- {
@@ -420,7 +420,7 @@ func numberToStringFormat(sb *bytes.Buffer, number *buffer, format string, nf *N
 
 	var digitCount, decimalPos, firstDigit, lastDigit, digPos, thousandPos, thousandCount, scaleAdjust, adjust, section, src int32
 	var scientific, thousandSeps bool
-	var dig []byte = number.Digits
+	dig := number.Digits
 	var ch byte
 
 	var tmp int32
@@ -601,11 +601,11 @@ func numberToStringFormat(sb *bytes.Buffer, number *buffer, format string, nf *N
 			groupDigits := [1]int32{3} // internal int[] _numberGroupSizes = new int[] { 3 };
 			var groupSizeIndex int32   // Index into the groupDigits array.
 			var groupTotalSizeCount int32
-			var groupSizeLen int32 = int32(len(groupDigits)) // The length of groupDigits array.
+			groupSizeLen := int32(len(groupDigits)) // The length of groupDigits array.
 			if groupSizeLen != 0 {
 				groupTotalSizeCount = groupDigits[groupSizeIndex] // The current running total of group size.
 			}
-			var groupSize int32 = groupTotalSizeCount
+			groupSize := groupTotalSizeCount
 			var totalDigits int32 // Actual number of digits in o/p
 			if adjust < 0 {
 				totalDigits = digPos + adjust
@@ -720,7 +720,13 @@ func numberToStringFormat(sb *bytes.Buffer, number *buffer, format string, nf *N
 		case '%':
 			sb.WriteString(nf.PercentSymbol)
 		case ',':
-			break
+			// Deliberately empty. A comma is a grouping directive, and it was
+			// consumed entirely by the scanning pass above, which set
+			// thousandSeps and thousandPos; the separators themselves are
+			// emitted by the '#' and '0' cases from thousandSepPos. The
+			// reference has `case ',': break;` here only because C# requires a
+			// terminating statement in a case -- in Go that break is redundant,
+			// and staticcheck flags it (SA4011).
 		case '\'', '"':
 			for src < int32(len(format)) && format[src] != 0 && format[src] != ch {
 				sb.WriteByte(format[src])

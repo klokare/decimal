@@ -36,7 +36,7 @@ func (d Decimal) String() string {
 func (d Decimal) Format(f fmt.State, verb rune) {
 	if verb == 'v' && f.Flag('+') {
 		b := d.Bits()
-		fmt.Fprintf(f, "decimal.Decimal{low:%d, mid:%d, high:%d, flags:%#08x}", b[0], b[1], b[2], b[3])
+		_, _ = fmt.Fprintf(f, "decimal.Decimal{low:%d, mid:%d, high:%d, flags:%#08x}", b[0], b[1], b[2], b[3])
 		return
 	}
 
@@ -62,13 +62,13 @@ func (d Decimal) Format(f fmt.State, verb rune) {
 			spec += strconv.Itoa(prec)
 		}
 	default:
-		fmt.Fprintf(f, "%%!%c(decimal.Decimal=%s)", verb, d.String())
+		_, _ = fmt.Fprintf(f, "%%!%c(decimal.Decimal=%s)", verb, d.String())
 		return
 	}
 
 	s, err := FormatWith(d, spec, Invariant)
 	if err != nil {
-		fmt.Fprintf(f, "%%!%c(decimal.Decimal=%v)", verb, err)
+		_, _ = fmt.Fprintf(f, "%%!%c(decimal.Decimal=%v)", verb, err)
 		return
 	}
 

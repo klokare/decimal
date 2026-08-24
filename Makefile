@@ -2,9 +2,9 @@ GO      ?= go
 DOTNET  ?= dotnet
 PKG     := ./...
 
-.PHONY: all test race checkptr vet fmt lint cover bench fuzz testdata testdata-check cross clean
+.PHONY: all test race checkptr vet fmt lint staticcheck cover bench fuzz testdata testdata-check cross clean
 
-all: fmt vet test
+all: fmt vet lint test
 
 test:
 	$(GO) test $(PKG)
@@ -23,8 +23,15 @@ fmt:
 	@out="$$(gofmt -l . )"; \
 	if [ -n "$$out" ]; then echo "gofmt needed:"; echo "$$out"; exit 1; fi
 
+# Runs via `go run` so no separate install is needed. Pin the version to keep
+# results reproducible between a laptop and CI.
+GOLANGCI_VERSION ?= v2.13.1
+
 lint:
-	golangci-lint run
+	$(GO) run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_VERSION) run ./...
+
+staticcheck:
+	$(GO) run honnef.co/go/tools/cmd/staticcheck@latest ./...
 
 cover:
 	$(GO) test -coverprofile=coverage.out $(PKG)

@@ -101,7 +101,8 @@ jobs:
           if [ -n "$out" ]; then echo "gofmt needed:"; echo "$out"; exit 1; fi
       - uses: golangci/golangci-lint-action@v6
         with:
-          version: latest
+          # Pinned so a new release cannot turn a green branch red on its own.
+          version: v2.13.1
 
   # The golden tables must match what the installed .NET produces. A diff here
   # means either the Go side and .NET have diverged, or the generator is not
