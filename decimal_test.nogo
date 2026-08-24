@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/stretchr/testify/assert"
+	"github.com/klokare/decimal/v2/internal/assert"
 )
 
 func TestNewFromInt32(t *testing.T) {

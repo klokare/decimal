@@ -5,7 +5,7 @@ import (
 	"math/rand"
 	"testing"
 
-	"github.com/stretchr/testify/assert"
+	"github.com/klokare/decimal/v2/internal/assert"
 )
 
 func SkipTestParse(t *testing.T) {

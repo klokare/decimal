@@ -3,8 +3,6 @@ package decimal
 import (
 	"math"
 	"unsafe"
-
-	"github.com/klokare/decimal/internal/platform"
 )
 
 // Constants ...
@@ -79,14 +77,14 @@ var (
 
 // region Decimal Math Helpers
 
-// getExponent32 ...
+// getExponent32 returns the biased IEEE-754 exponent of f.
 func getExponent32(f float32) uint32 {
-	return uint32(byte(*(*uint32)(unsafe.Pointer(&f)) >> 23))
+	return uint32(byte(math.Float32bits(f) >> 23))
 }
 
-// getExponent64 ...
+// getExponent64 returns the biased IEEE-754 exponent of f.
 func getExponent64(f float64) uint32 {
-	return uint32((*(*uint64)(unsafe.Pointer(&f)) >> 52) & 0x7FF)
+	return uint32(math.Float64bits(f)>>52) & 0x7FF
 }
 
 // uInt32x32To64 ...
@@ -147,61 +145,26 @@ func div96By32(bufNum *buf12, den uint32) uint32 {
 }
 
 // div96ByConst ...
+// div96ByConst divides a 96-bit value (high64:low) by a small constant power of
+// ten, in place. It reports whether the division was exact; when it was not, the
+// operands are left untouched.
+//
+// The .NET reference carries a second, half-width implementation for 32-bit
+// targets, because RyuJIT will not turn a 64-bit division by a constant into a
+// multiplication by its reciprocal. Go emits a runtime helper call there instead,
+// which is slower but correct, so only this form is kept.
 func div96ByConst(high64 *uint64, low *uint32, pow uint32) bool {
+	div64 := *high64 / uint64(pow)
+	div := uint32(((*high64-div64*uint64(pow))<<32 + uint64(*low)) / uint64(pow))
 
-	if platform.Bits64 {
-		var div64 uint64 = *high64 / uint64(pow)
-		var div uint32 = uint32(((((*high64 - div64*uint64(pow)) << 32) + uint64(*low)) / uint64(pow)))
-		if *low == div*pow {
-			*high64 = div64
-			*low = div
-			return true
-		}
-	}
-
-	// DOTNET: 32-bit RyuJIT doesn't convert 64-bit division by constant into multiplication by reciprocal. Do half-width divisions instead.
-	var num, mid32, low16, div uint32
-	if *high64 <= math.MaxUint32 {
-		num = uint32(*high64)
-		mid32 = num / pow
-		num = (num - mid32*pow) << 16
-
-		num += *low >> 16
-		low16 = num / pow
-		num = (num - low16*pow) << 16
-
-		num += uint32(uint16(*low))
-		div = num / pow
-		if num == div*pow {
-			*high64 = uint64(mid32)
-			*low = (low16 << 16) + div
-			return true
-		}
-	} else {
-		num = uint32(*high64 >> 32)
-		var high32 uint32 = num / pow
-		num = (num - high32*pow) << 16
-
-		num += uint32(*high64) >> 16
-		mid32 = num / pow
-		num = (num - mid32*pow) << 16
-
-		num += uint32(uint16(*high64))
-		div = num / pow
-		num = (num - div*pow) << 16
-		mid32 = div + (mid32 << 16)
-
-		num += *low >> 16
-		low16 = num / pow
-		num = (num - low16*pow) << 16
-
-		num += uint32(uint16(*low))
-		div = num / pow
-		if num == div*pow {
-			*high64 = (uint64(high32) << 32) | uint64(mid32)
-			*low = (low16 << 16) + div
-			return true
-		}
+	// The remainder of high64/pow is below pow, so (rem<<32)+low fits in 64 bits
+	// and div fits in 32. Comparing low against the truncated product is then an
+	// exact test for divisibility: any non-zero remainder is smaller than pow and
+	// so cannot vanish modulo 2^32.
+	if *low == div*pow {
+		*high64 = div64
+		*low = div
+		return true
 	}
 	return false
 }
@@ -211,19 +174,12 @@ func div96ByConst(high64 *uint64, low *uint32, pow uint32) bool {
 func calcUnscale(low *uint32, high64 *uint64, scale *int32) {
 	// Since 10 = 2 * 5, there must be a factor of 2 for every power of 10 we can extract.
 	// We use this as a quick test on whether to try a given power.
-	if platform.Bits64 {
-		for byte(*low) == 0 && *scale >= 8 && div96ByConst(high64, low, 100000000) {
-			*scale -= 8
-		}
+	for byte(*low) == 0 && *scale >= 8 && div96ByConst(high64, low, 100000000) {
+		*scale -= 8
+	}
 
-		if (*low&0xF) == 0 && *scale > 4 && div96ByConst(high64, low, 10000) {
-			*scale -= 4
-		}
-
-	} else {
-		for (*low&0xF) == 0 && *scale > 4 && div96ByConst(high64, low, 10000) {
-			*scale -= 4
-		}
+	if (*low&0xF) == 0 && *scale > 4 && div96ByConst(high64, low, 10000) {
+		*scale -= 4
 	}
 
 	if (*low&3) == 0 && *scale > 2 && div96ByConst(high64, low, 100) {
@@ -444,43 +400,28 @@ func scaleResult(bufRes *buf24, hiRes uint32, scale int32) int32 {
 		for {
 			sticky |= remainder // record remainder as sticky bit
 
+			// Scaling loop specialized for each power of 10 because division by a
+			// constant is an order of magnitude faster.
 			var power uint32
-			// Scaling loop specialized for each power of 10 because division by constant is an order of magnitude faster (especially for 64-bit division that's actually done by 128bit DIV on x64)
-			if platform.Bits64 {
-				switch newScale {
-				case 1:
-					power, quotient, remainder = divByConst(result, hiRes, 10)
-				case 2:
-					power, quotient, remainder = divByConst(result, hiRes, 100)
-				case 3:
-					power, quotient, remainder = divByConst(result, hiRes, 1000)
-				case 4:
-					power, quotient, remainder = divByConst(result, hiRes, 10000)
-				case 5:
-					power, quotient, remainder = divByConst(result, hiRes, 100000)
-				case 6:
-					power, quotient, remainder = divByConst(result, hiRes, 1000000)
-				case 7:
-					power, quotient, remainder = divByConst(result, hiRes, 10000000)
-				case 8:
-					power, quotient, remainder = divByConst(result, hiRes, 100000000)
-				default:
-					power, quotient, remainder = divByConst(result, hiRes, tenToPowerNine)
-				}
-			} else {
-				switch newScale {
-				case 1:
-					power, quotient, remainder = divByConst(result, hiRes, 10)
-				case 2:
-					power, quotient, remainder = divByConst(result, hiRes, 100)
-				case 3:
-					power, quotient, remainder = divByConst(result, hiRes, 1000)
-				case 4:
-					power, quotient, remainder = divByConst(result, hiRes, 10000)
-				default:
-					// goto case 4 <- not possible in Go just using case 4's code
-					power, quotient, remainder = divByConst(result, hiRes, 10000)
-				}
+			switch newScale {
+			case 1:
+				power, quotient, remainder = divByConst(result, hiRes, 10)
+			case 2:
+				power, quotient, remainder = divByConst(result, hiRes, 100)
+			case 3:
+				power, quotient, remainder = divByConst(result, hiRes, 1000)
+			case 4:
+				power, quotient, remainder = divByConst(result, hiRes, 10000)
+			case 5:
+				power, quotient, remainder = divByConst(result, hiRes, 100000)
+			case 6:
+				power, quotient, remainder = divByConst(result, hiRes, 1000000)
+			case 7:
+				power, quotient, remainder = divByConst(result, hiRes, 10000000)
+			case 8:
+				power, quotient, remainder = divByConst(result, hiRes, 100000000)
+			default:
+				power, quotient, remainder = divByConst(result, hiRes, tenToPowerNine)
 			}
 			result[hiRes] = quotient
 			// If first quotient was 0, update hiRes.
@@ -488,11 +429,7 @@ func scaleResult(bufRes *buf24, hiRes uint32, scale int32) int32 {
 				hiRes--
 			}
 
-			if platform.Bits64 {
-				newScale -= maxInt32Scale
-			} else {
-				newScale -= 4
-			}
+			newScale -= maxInt32Scale
 
 			if newScale > 0 {
 				continue // scale some more
@@ -542,34 +479,20 @@ func scaleResult(bufRes *buf24, hiRes uint32, scale int32) int32 {
 	return scale
 }
 
-// divByConst ...
+// divByConst divides the multi-word value in result by a small constant power of
+// ten, in place, returning that power along with the leading quotient word and
+// the final remainder.
+//
+// The .NET reference splits this into half-width divisions on 32-bit targets for
+// the same RyuJIT reason described on div96ByConst. Go needs no such split.
 func divByConst(result *[6]uint32, hiRes uint32, power uint32) (uint32, uint32, uint32) {
-	var high uint32 = result[hiRes]
+	high := result[hiRes]
 	quotient := high / power
 	remainder := high - quotient*power
 	for i := hiRes - 1; int32(i) >= 0; i-- {
-		if platform.Bits64 {
-			var num uint64 = uint64(result[i]) + (uint64(remainder) << 32)
-			result[i] = uint32(num / uint64(power))
-			remainder = uint32(num) - result[i]*power
-		} else {
-			// TODO: work on this as the C# gets a bit unsafey with pointers to 8 and 16 bit
-			// DOTNET: 32-bit RyuJIT doesn't convert 64-bit division by constant into multiplication by reciprocal. Do half-width divisions instead.
-			// var low16, high16 int32
-			// if platform.LittleEndian {
-			// 	low16 = 0
-			// 	high16 = 2
-			// } else {
-			// 	low16 = 2
-			// 	high16 = 0
-			// }
-			// // byte* is used here because Roslyn doesn't do constant propagation for pointer arithmetic
-			// var num uint32 = uint32(uint16(*(*byte)(unsafe.Pointer(result))[i+4+high16])) + (remainder << 16)
-			// var div uint32 = num / power
-			// remainder = num - div*power
-			// *(*uint16)((*byte)(unsafe.Pointer(result))[i+4+high16]) = uint16(div)
-			panic("not implemented for 32-bit")
-		}
+		num := uint64(result[i]) + uint64(remainder)<<32
+		result[i] = uint32(num / uint64(power))
+		remainder = uint32(num) - result[i]*power
 	}
 	return power, quotient, remainder
 }
@@ -1337,7 +1260,7 @@ func varDecFromR4(input float32, result *Decimal) {
 		}
 		dbl *= sDoublePowers10[power]
 	} else {
-		if power != -1 || dbl >= 1E7 {
+		if power != -1 || dbl >= 1e7 {
 			dbl /= sDoublePowers10[-power]
 		} else {
 			power = 0 // didn't scale it
@@ -1345,7 +1268,7 @@ func varDecFromR4(input float32, result *Decimal) {
 
 	}
 
-	if dbl < 1E6 && power < decScaleMax {
+	if dbl < 1e6 && power < decScaleMax {
 		dbl *= 10
 		power++
 	}
@@ -1470,14 +1393,14 @@ func varDecFromR8(input float64, result *Decimal) {
 		}
 		dbl *= sDoublePowers10[power]
 	} else {
-		if power != -1 || dbl >= 1E15 {
+		if power != -1 || dbl >= 1e15 {
 			dbl /= sDoublePowers10[-power]
 		} else {
 			power = 0 // didn't scale it
 		}
 	}
 
-	if dbl < 1E14 && power < decScaleMax {
+	if dbl < 1e14 && power < decScaleMax {
 		dbl *= 10
 		power++
 	}

@@ -1,5 +1,3 @@
-module github.com/klokare/decimal
+module github.com/klokare/decimal/v2
 
-go 1.13
-
-require github.com/stretchr/testify v1.6.1
+go 1.21

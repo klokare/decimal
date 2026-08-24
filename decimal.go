@@ -6,13 +6,11 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"math/bits"
 	"math/rand"
 	"sort"
 	"strconv"
 	"strings"
-	"unsafe"
-
-	"github.com/klokare/decimal/internal/platform"
 )
 
 // RoundingMode ...
@@ -46,21 +44,15 @@ type Decimal struct {
 	mid   uint32
 }
 
-// low64 ...
+// low64 returns the low and mid words as a single 64-bit value.
 func (d Decimal) low64() uint64 {
-	if platform.LittleEndian {
-		return *(*uint64)(unsafe.Pointer(&d.low))
-	}
 	return uint64(d.mid)<<32 | uint64(d.low)
 }
 
-// setLow64 ...
+// setLow64 splits a 64-bit value across the low and mid words.
 func (d *Decimal) setLow64(value uint64) {
-	if platform.LittleEndian {
-		*(*uint64)(unsafe.Pointer(&d.low)) = value
-	}
-	d.mid = (uint32(value >> 32))
-	d.low = (uint32(value))
+	d.mid = uint32(value >> 32)
+	d.low = uint32(value)
 }
 
 // scale ...
@@ -384,7 +376,7 @@ func (d Decimal) Sub(value Decimal) Decimal {
 
 // ToInt ...
 func (d Decimal) ToInt() int {
-	if platform.Bits64 {
+	if bits.UintSize == 64 {
 		return int(d.ToInt64())
 	}
 	return int(d.ToInt32())
@@ -392,7 +384,7 @@ func (d Decimal) ToInt() int {
 
 // ToUint ...
 func (d Decimal) ToUint() uint {
-	if platform.Bits64 {
+	if bits.UintSize == 64 {
 		return uint(d.ToUint64())
 	}
 	return uint(d.ToUint32())

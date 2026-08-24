@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/stretchr/testify/assert"
+	"github.com/klokare/decimal/v2/internal/assert"
 )
 
 func makeDecimal(t *testing.T, raw string) (Decimal, bool) {
