@@ -3,6 +3,7 @@
 [![Go Reference](https://pkg.go.dev/badge/github.com/klokare/decimal/v2.svg)](https://pkg.go.dev/github.com/klokare/decimal/v2)
 [![CI](https://github.com/klokare/decimal/actions/workflows/ci.yml/badge.svg)](https://github.com/klokare/decimal/actions/workflows/ci.yml)
 [![Go Report Card](https://goreportcard.com/badge/github.com/klokare/decimal/v2)](https://goreportcard.com/report/github.com/klokare/decimal/v2)
+[![Coverage Status](https://coveralls.io/repos/github/klokare/decimal/badge.svg?branch=master)](https://coveralls.io/github/klokare/decimal?branch=master)
 
 A Go port of .NET's `System.Decimal`: a 96-bit base-10 fixed-point number with a scale of 0 to 28
 digits.
