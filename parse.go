@@ -1,217 +1,354 @@
 package decimal
 
 import (
-	"errors"
+	"fmt"
 	"math"
+	"strings"
 )
 
-// decimalPrecision ...
+// decimalPrecision is the number of significant digits a Decimal can hold.
 const decimalPrecision = 28
 
-func newDecimal(low, mid, high uint32, isNegative bool, scale byte) Decimal {
-	if scale > 28 {
-		panic("argument out of range exception")
-	}
+// parsePrecision is the working precision of the parser: one digit beyond what
+// fits, so the 29th digit can drive the rounding decision.
+const parsePrecision = 29
 
-	var flags uint32
-	flags = uint32(scale) << 16
-	if isNegative {
-		flags |= signMask
-	}
-	return Decimal{
-		low:   low,
-		mid:   mid,
-		high:  high,
-		flags: flags,
-	}
+// Styles selects which textual conventions [ParseStyle] will accept. It mirrors
+// .NET's NumberStyles, restricted to the flags meaningful for a Decimal --
+// AllowHexSpecifier has no decimal analogue and is deliberately absent.
+type Styles uint32
+
+// Individual permissions, and the combinations .NET names.
+const (
+	// AllowLeadingWhite permits whitespace before the number.
+	AllowLeadingWhite Styles = 1 << iota
+	// AllowTrailingWhite permits whitespace after the number.
+	AllowTrailingWhite
+	// AllowLeadingSign permits a sign before the number.
+	AllowLeadingSign
+	// AllowTrailingSign permits a sign after the number.
+	AllowTrailingSign
+	// AllowParentheses permits parentheses around the number to mean negative.
+	AllowParentheses
+	// AllowDecimalPoint permits a decimal separator.
+	AllowDecimalPoint
+	// AllowThousands permits group separators among the integer digits.
+	AllowThousands
+	// AllowExponent permits scientific notation.
+	AllowExponent
+	// AllowCurrencySymbol permits the culture's currency symbol.
+	AllowCurrencySymbol
+
+	// None accepts digits only.
+	None Styles = 0
+	// Integer is AllowLeadingWhite | AllowTrailingWhite | AllowLeadingSign.
+	Integer = AllowLeadingWhite | AllowTrailingWhite | AllowLeadingSign
+	// Number adds a trailing sign, a decimal point and group separators.
+	Number = Integer | AllowTrailingSign | AllowDecimalPoint | AllowThousands
+	// Float adds an exponent but, like .NET, drops group separators.
+	Float = AllowLeadingWhite | AllowTrailingWhite | AllowLeadingSign | AllowDecimalPoint | AllowExponent
+	// Currency adds parentheses and the currency symbol.
+	Currency = Number | AllowParentheses | AllowCurrencySymbol
+	// Any accepts everything this package understands.
+	Any = Currency | AllowExponent
+)
+
+// Parse converts a string to a Decimal using [Number] and [Invariant]. That
+// accepts an optional sign, digits with optional group separators, and an
+// optional fractional part -- but not scientific notation. Use [ParseStyle]
+// with [Float] or [Any] for that.
+func Parse(s string) (Decimal, error) {
+	return ParseStyle(s, Number, Invariant)
 }
 
-// Parse ...
-func Parse(s string) (d Decimal, err error) {
-	// FROM: Number.Parsing.cs:1710
-
-	// Begin a new buffer
-	n := len(s) + 1
-	if n > 29+1+1 {
-		n = 29 + 1 + 1 // 29 for the longest input + 1 for rounding
+// MustParse is [Parse] with the error turned into a panic. It suits literals
+// fixed at compile time, where a failure is a programming error:
+//
+//	var rate = decimal.MustParse("0.0825")
+func MustParse(s string) Decimal {
+	d, err := Parse(s)
+	if err != nil {
+		panic(err)
 	}
-	b := &buffer{Digits: make([]byte, 0, n)}
-
-	// Parse the string
-	if !parseString(s, b) {
-		err = errors.New("failed to parse string: " + s)
-	}
-
-	// Parse the number
-	if !parseDecimal(b, &d) {
-		err = errors.New("failed to parse decimal: " + s)
-	}
-	return
+	return d
 }
 
-// TODO: only implemented Number for now: AllowLeadingWhite | AllowTrailingWhite | AllowLeadingSign | AllowTrailingSign | AllowDecimalPoint | AllowThousands
-// TODO: only implemented '.' and ',' for decimal and group separator. Ignoring all other separators for now.
-func parseString(value string, number *buffer) bool {
-	// FROM. Number.Parsing.cs
+// ParseStyle converts a string to a Decimal, accepting the conventions selected
+// by style and described by nf. A nil nf means [Invariant].
+func ParseStyle(s string, style Styles, nf *NumberFormat) (Decimal, error) {
+	nf = nf.orInvariant()
 
-	// End the number buffer with a zero byte.
-	defer func() { number.Digits = append(number.Digits, 0) }()
-
-	// Special case: empty string
-	if len(value) == 0 {
-		return true
+	var b buffer
+	b.Digits = make([]byte, 0, parsePrecision+2)
+	if !parseString(s, &b, style, nf) {
+		return Decimal{}, fmt.Errorf("%w: %q", ErrSyntax, s)
 	}
 
-	const StateSign = 0x0001
-	const StateParens = 0x0002
-	const StateDigits = 0x0004
-	const StateNonZero = 0x0008
-	const StateDecimal = 0x0010
-	const StateCurrency = 0x0020
+	var d Decimal
+	if !parseDecimal(&b, &d) {
+		return Decimal{}, fmt.Errorf("%w: %q is out of range for a Decimal", ErrOverflow, s)
+	}
+	return d, nil
+}
 
-	var state uint32
-	var dcnt, p, dend int
-	var dmax int = 30
-	var c rune
-	for p, c = range value {
-		switch c {
-		case '+':
-			if (state & StateDecimal) != 0 {
-				return false // sign needs to precede the digits
-			}
-			if (state & StateSign) != 0 {
-				return false // already seen a sign in the string
-			}
-			state |= StateSign
-		case '-':
-			if (state & StateDecimal) != 0 {
-				return false // sign needs to precede the digits
-			}
-			if (state & StateSign) != 0 {
-				return false // already seen a sign in the string
-			}
-			state |= StateSign
-			number.IsNegative = true
-		case '.':
-			if (state & StateDecimal) != 0 {
-				return false // already have a decimal character
-			}
-			state |= StateDecimal
-		case ',':
-			// ignore group separator
-		case 'e', 'E':
-			goto Scientific
-		case ' ', '\t', '\n':
-			// ignore white space
-		case '"', '\'':
-			// ignore quotes
-		default:
-			if c >= '0' && c <= '9' {
-				state |= StateDigits
-				if c != '0' || (state&StateNonZero) != 0 {
-					if dcnt < dmax {
-						number.Digits = append(number.Digits, byte(c))
-						dcnt++
-						if c != '0' {
-							dend = dcnt
-						}
+// parseString scans value into number, reporting whether the whole input was
+// consumed as a well-formed number.
+//
+// FROM: Number.Parsing.cs ParseNumber
+func parseString(value string, number *buffer, style Styles, nf *NumberFormat) bool {
+	// The scan is a small state machine over the input. Each state records what
+	// has already been seen so that a second sign, a second decimal point or a
+	// group separator in the fraction can be rejected.
+	const (
+		stateSign = 1 << iota
+		stateParens
+		stateDigits
+		stateNonZero
+		stateDecimal
+		stateCurrency
+	)
 
-					} else if c != '0' {
-						// For decimal and binary floating-point numbers, we only
-						// need to store digits up to maxDigCount. However, we still
-						// need to keep track of whether any additional digits past
-						// maxDigCount were non-zero, as that can impact rounding
-						// for an input that falls evenly between two representable
-						// results.
-						number.HasNonZeroTail = true
-					}
+	var state int
+	var digitCount int
+	var digitEnd int
+	const digitMax = parsePrecision + 1
 
-					if (state & StateDecimal) == 0 {
-						number.Scale++
-					}
-					state |= StateNonZero
-				} else if (state & StateDecimal) != 0 {
-					number.Scale--
-				}
-			} else {
-				break // cannot parse this character for decimal
-			}
+	// Separators are strings, not bytes: a culture may use a multi-byte one.
+	decSep := nf.NumberDecimalSeparator
+	grpSep := nf.NumberGroupSeparator
+	if style&AllowCurrencySymbol != 0 {
+		// .NET switches to the currency separators once a currency symbol is
+		// permitted, and accepts either spelling.
+		decSep = nf.CurrencyDecimalSeparator
+		grpSep = nf.CurrencyGroupSeparator
+	}
+
+	i := 0
+	n := len(value)
+
+	skipWhite := func() {
+		for i < n && isWhite(value[i]) {
+			i++
 		}
 	}
+	// Whitespace between the sign and the digits is only accepted once a currency
+	// symbol has been seen, or when the culture's negative pattern is "- n"
+	// (index 2). Otherwise "- 1" is not a number, which is what .NET reports.
+	skipLeadingWhite := func() {
+		if style&AllowLeadingWhite == 0 {
+			return
+		}
+		if state&stateSign != 0 && state&stateCurrency == 0 && nf.NumberNegativePattern != 2 {
+			return
+		}
+		skipWhite()
+	}
+	// eat consumes tok at the cursor if present.
+	eat := func(tok string) bool {
+		if tok != "" && strings.HasPrefix(value[i:], tok) {
+			i += len(tok)
+			return true
+		}
+		return false
+	}
 
-Scientific:
-	negExp := false
-	number.DigitsCount = int32(dend)
-	if (state & StateDigits) != 0 {
-		if c == 'E' || c == 'e' {
-			var exp int32
-			for p, c = range value[p+1:] {
-				switch c {
-				case '+':
-					// do nothing
-				case '-':
-					negExp = true
-				default:
-					if c >= '0' && c <= '9' {
-						exp = exp*10 + (c - '0')
-					} else {
-						break // unknown character
+	skipLeadingWhite()
+
+	// Leading sign, currency symbol and opening parenthesis may appear in either
+	// order, and .NET accepts a currency symbol on either side of the sign.
+	for i < n {
+		switch {
+		case style&AllowLeadingSign != 0 && state&stateSign == 0 && eat(nf.NegativeSign):
+			state |= stateSign
+			number.IsNegative = true
+		case style&AllowLeadingSign != 0 && state&stateSign == 0 && eat(nf.PositiveSign):
+			state |= stateSign
+		case style&AllowParentheses != 0 && state&stateSign == 0 && value[i] == '(':
+			i++
+			state |= stateSign | stateParens
+			number.IsNegative = true
+		case style&AllowCurrencySymbol != 0 && state&stateCurrency == 0 && eat(nf.CurrencySymbol):
+			state |= stateCurrency
+		default:
+			goto digits
+		}
+		skipLeadingWhite()
+	}
+
+digits:
+	for i < n {
+		c := value[i]
+		if c >= '0' && c <= '9' {
+			state |= stateDigits
+			i++
+			if c != '0' || state&stateNonZero != 0 {
+				if digitCount < digitMax {
+					number.Digits = append(number.Digits, c)
+					digitCount++
+					if c != '0' {
+						digitEnd = digitCount
 					}
+				} else if c != '0' {
+					// Beyond the digits that fit, only whether anything non-zero
+					// followed still matters, for the midpoint rounding decision.
+					number.HasNonZeroTail = true
 				}
+				if state&stateDecimal == 0 {
+					number.Scale++
+				}
+				state |= stateNonZero
+			} else if state&stateDecimal != 0 {
+				number.Scale--
+			}
+			continue
+		}
+
+		if style&AllowDecimalPoint != 0 && state&stateDecimal == 0 && eat(decSep) {
+			state |= stateDecimal
+			continue
+		}
+
+		// A group separator is only meaningful among the integer digits.
+		if style&AllowThousands != 0 && state&stateDigits != 0 && state&stateDecimal == 0 && eat(grpSep) {
+			continue
+		}
+
+		break
+	}
+
+	if state&stateDigits == 0 {
+		// No digits at all is not a number, however well-formed the decoration.
+		return false
+	}
+	number.DigitsCount = int32(digitEnd)
+
+	// Exponent.
+	if style&AllowExponent != 0 && i < n && (value[i] == 'e' || value[i] == 'E') {
+		save := i
+		i++
+		negExp := false
+		if i < n {
+			if strings.HasPrefix(value[i:], nf.NegativeSign) {
+				negExp = true
+				i += len(nf.NegativeSign)
+			} else if strings.HasPrefix(value[i:], nf.PositiveSign) {
+				i += len(nf.PositiveSign)
+			}
+		}
+		if i < n && value[i] >= '0' && value[i] <= '9' {
+			var exp int32
+			for i < n && value[i] >= '0' && value[i] <= '9' {
+				if exp < 1_000_000 { // saturate; anything this large is out of range anyway
+					exp = exp*10 + int32(value[i]-'0')
+				}
+				i++
 			}
 			if negExp {
 				exp = -exp
 			}
 			number.Scale += exp
+		} else {
+			// "1e" and "1e+" are not exponents. .NET rewinds and lets the trailing
+			// checks reject the leftover text.
+			i = save
 		}
 	}
+
+	// Trailing sign, currency symbol and closing parenthesis.
+	for i < n {
+		if style&AllowTrailingWhite != 0 {
+			skipWhite()
+			if i >= n {
+				break
+			}
+		}
+		switch {
+		case style&AllowTrailingSign != 0 && state&stateSign == 0 && eat(nf.NegativeSign):
+			state |= stateSign
+			number.IsNegative = true
+		case style&AllowTrailingSign != 0 && state&stateSign == 0 && eat(nf.PositiveSign):
+			state |= stateSign
+		case style&AllowCurrencySymbol != 0 && state&stateCurrency == 0 && eat(nf.CurrencySymbol):
+			state |= stateCurrency
+		case state&stateParens != 0 && value[i] == ')':
+			i++
+			state &^= stateParens
+		default:
+			goto done
+		}
+	}
+
+done:
+	if style&AllowTrailingWhite != 0 {
+		skipWhite()
+	}
+
+	// An opening parenthesis that was never closed is malformed.
+	if state&stateParens != 0 {
+		return false
+	}
+
+	// Anything left over means the input was not a number.
+	if i != n {
+		return false
+	}
+
+	// The scan loop reads digits until they no longer fit; parseDecimal expects a
+	// trailing zero byte marking the end, as the C# buffer has.
+	number.Digits = append(number.Digits, 0)
 	return true
 }
 
-// NOTE: the `number`, if not empty, will be assumed to have a trailing zero byte to signify the end. This is so the following code matches the c# as closely as possible.
+// isWhite reports whether c is whitespace for parsing purposes, matching the
+// characters .NET's parser skips.
+func isWhite(c byte) bool {
+	switch c {
+	case ' ', '\t', '\n', '\v', '\f', '\r':
+		return true
+	}
+	return false
+}
+
+// parseDecimal converts a scanned digit buffer into a Decimal, reporting whether
+// the value fits. number.Digits must end in a zero byte.
+//
+// FROM: Number.Parsing.cs TryParseDecimal
 func parseDecimal(number *buffer, result *Decimal) bool {
-	// FROM: Number.Parsing.cs:1570
-
-	const DecimalPrecision int32 = 29 // FROM: Number.Formatting.cs:245
-
-	// Special case: empty buffer
 	if len(number.Digits) == 0 {
 		*result = Zero
 		return true
 	}
 
-	// Number has been filled, try to parse.
-	var p int // index in the digit slice
-	var e int32 = number.Scale
-	var sign bool = number.IsNegative
-	var c byte // a digit from the slice
-	c = number.Digits[p]
+	var p int
+	e := number.Scale
+	sign := number.IsNegative
+	c := number.Digits[p]
 
 	if c == 0 {
-		// To avoid risking an app-compat issue with pre 4.5 (where some app was illegally using Reflection to examine the internal scale bits), we'll only force
-		// the scale to 0 if the scale was previously positive (previously, such cases were unparsable to a bug.)
-		// TODO: implement this clamping?
-		var flags uint32
+		// All digits were zero, so the value is zero. Only the scale and sign
+		// survive, and the scale is clamped into the representable range.
 		e = -e
 		if e < 0 {
 			e = 0
-		} else if e > 28 {
-			e = 28
+		} else if e > decimalPrecision {
+			e = decimalPrecision
 		}
-		flags = uint32(e) << 16
+		flags := uint32(e) << scaleShift
 		if sign {
-			flags = signMask
+			// This has to OR into flags: assigning would drop the scale, which is
+			// observable as -0.00 losing its trailing zeros.
+			flags |= signMask
 		}
 		*result = Decimal{flags: flags}
 		return true
 	}
 
-	if e > DecimalPrecision {
+	if e > parsePrecision {
 		return false
 	}
 
 	var low64 uint64
-	for e > -28 {
+	for e > -decimalPrecision {
 		e--
 		low64 *= 10
 		low64 += uint64(c - '0')
@@ -233,11 +370,15 @@ func parseDecimal(number *buffer, result *Decimal) bool {
 	}
 
 	var high uint32
-	for (e > 0 || (c != 0 && e > -28)) && (high < math.MaxUint32/10 || (high == math.MaxUint32/10 && (low64 < 0x99999999_99999999 || (low64 == 0x99999999_99999999 && c <= '5')))) {
+	for (e > 0 || (c != 0 && e > -decimalPrecision)) &&
+		(high < math.MaxUint32/10 ||
+			(high == math.MaxUint32/10 &&
+				(low64 < 0x9999999999999999 ||
+					(low64 == 0x9999999999999999 && c <= '5')))) {
 
-		// Multiply by 10
-		var tmpLow uint64 = uint64(uint32(low64)) * 10
-		var tmp64 uint64 = uint64(uint32(low64>>32))*10 + (tmpLow >> 32)
+		// Multiply the 96-bit accumulator by ten.
+		tmpLow := uint64(uint32(low64)) * 10
+		tmp64 := uint64(uint32(low64>>32))*10 + (tmpLow >> 32)
 		low64 = uint64(uint32(tmpLow)) + (tmp64 << 32)
 		high = uint32(tmp64>>32) + high*10
 
@@ -254,54 +395,59 @@ func parseDecimal(number *buffer, result *Decimal) bool {
 	}
 
 	if c >= '5' {
-		if (c == '5') && ((low64 & 1) == 0) {
+		if c == '5' && low64&1 == 0 {
 			p++
 			c = number.Digits[p]
 
 			hasZeroTail := !number.HasNonZeroTail
 
-			// We might still have some additional digits, in which case they need
-			// to be considered as part of hasZeroTail. Some examples of this are:
-			//  * 3.0500000000000000000001e-27
-			//  * 3.05000000000000000000001e-27
-			// In these cases, we will have processed 3 and 0, and ended on 5. The
-			// buffer, however, will still contain a number of trailing zeros and
-			// a trailing non-zero number.
-
-			for (c != 0) && hasZeroTail {
-				hasZeroTail = hasZeroTail && (c == '0')
+			// Digits may remain past the point where the accumulator filled up.
+			// They count towards the tail: 3.0500000000000000000000000001e-27
+			// is not a midpoint even though the digit at the boundary is 5.
+			for c != 0 && hasZeroTail {
+				hasZeroTail = c == '0'
 				p++
 				c = number.Digits[p]
 			}
 
-			// We should either be at the end of the stream or have a non-zero tail
 			if hasZeroTail {
-				// When the next digit is 5, the number is even, and all following
-				// digits are zero we don't need to round.
-				goto NoRounding
+				// Exactly a midpoint with an even result: banker's rounding leaves
+				// it alone.
+				goto noRounding
 			}
 		}
 
 		if low64++; low64 == 0 {
 			if high++; high == 0 {
-				low64 = 0x99999999_9999999A
+				low64 = 0x999999999999999A
 				high = math.MaxUint32 / 10
 				e++
 			}
 		}
 	}
 
-NoRounding:
+noRounding:
 	if e > 0 {
 		return false
 	}
 
-	if e <= -DecimalPrecision {
-		// Parsing a large scale zero can give you more precision than fits in the decimal.
-		// This should only happen for actual zeros or very small numbers that round to zero.
-		*result = newDecimal(0, 0, 0, sign, byte(DecimalPrecision-1))
+	if e <= -parsePrecision {
+		// A very small value, or a zero written with more scale than fits.
+		*result = newDecimal(0, 0, 0, sign, parsePrecision-1)
 	} else {
 		*result = newDecimal(uint32(low64), uint32(low64>>32), high, sign, byte(-e))
 	}
 	return true
+}
+
+// newDecimal assembles a Decimal from its parts. scale must be 0 to 28.
+func newDecimal(low, mid, high uint32, isNegative bool, scale byte) Decimal {
+	if scale > decimalPrecision {
+		panic(fmt.Errorf("%w: %d", ErrScaleRange, scale))
+	}
+	flags := uint32(scale) << scaleShift
+	if isNegative {
+		flags |= signMask
+	}
+	return Decimal{low: low, mid: mid, high: high, flags: flags}
 }

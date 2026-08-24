@@ -1,6 +1,9 @@
 package decimal
 
-import "testing"
+import (
+	"strconv"
+	"testing"
+)
 
 // nfFor maps a culture name in the golden tables to its NumberFormat.
 func nfFor(t *testing.T, name string) *NumberFormat {
@@ -71,4 +74,54 @@ func TestGoldenToStringCustom(t *testing.T) {
 		rec, panicked := wantPanic(func() { got, err = FormatWith(d, format, nf) })
 		checkString(t, r, got, err, panicked, rec, formatBits(d)+" "+format)
 	})
+}
+
+func TestGoldenParse(t *testing.T) {
+	golden(t, "parse", func(t *testing.T, r row) {
+		input := r.str(t, 1)
+		style := r.fields[2]
+		nf := nfFor(t, r.fields[3])
+
+		var got Decimal
+		var err error
+		rec, panicked := wantPanic(func() { got, err = ParseStyle(input, styleFor(t, style), nf) })
+
+		ctx := "input=" + strconv.Quote(input) + " style=" + style + " culture=" + r.fields[3]
+		if r.ok() {
+			switch {
+			case panicked:
+				t.Errorf("%s: unexpected panic: %v  [%s]", r, rec, ctx)
+			case err != nil:
+				t.Errorf("%s: unexpected error: %v  [%s]", r, err, ctx)
+			default:
+				want := r.dec(t, 0)
+				if got != want {
+					t.Errorf("%s: want %s (%s), got %s (%s)  [%s]",
+						r, formatBits(want), want.String(), formatBits(got), got.String(), ctx)
+				}
+			}
+			return
+		}
+		if err == nil && !panicked {
+			t.Errorf("%s: expected %s, got %s (%s)  [%s]",
+				r, r.outcome, formatBits(got), got.String(), ctx)
+		}
+	})
+}
+
+func styleFor(t *testing.T, name string) Styles {
+	t.Helper()
+	switch name {
+	case "number":
+		return Number
+	case "float":
+		return Float
+	case "any":
+		return Any
+	case "integer":
+		return Integer
+	default:
+		t.Fatalf("unknown NumberStyles name %q", name)
+		return 0
+	}
 }
