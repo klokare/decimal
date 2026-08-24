@@ -2,330 +2,58 @@ package decimal
 
 import (
 	"bytes"
-	"errors"
-	"math"
+	"fmt"
 	"unicode/utf8"
 )
 
-// decimalPrecision ...
-const decimalPrecision = 28
+// defaultPrecisionExponentialFormat is the precision "E" uses when none is given.
+const defaultPrecisionExponentialFormat = 6
 
-func newDecimal(low, mid, high uint32, isNegative bool, scale byte) Decimal {
-	if scale > 28 {
-		panic("argument out of range exception")
-	}
+// perMilleUTF8 is U+2030 PER MILLE SIGN encoded as UTF-8. The custom-format
+// scanner walks bytes, so the character has to be matched as its byte sequence.
+const perMilleUTF8 = "\u2030"
 
-	var flags uint32
-	flags = uint32(scale) << 16
-	if isNegative {
-		flags |= signMask
-	}
-	return Decimal{
-		low:   low,
-		mid:   mid,
-		high:  high,
-		flags: flags,
-	}
+// Format renders d according to a .NET-style format string, using [Invariant].
+//
+// The standard specifiers are C (currency), E (scientific), F (fixed-point),
+// G (general), N (number with group separators), P (percent) and R
+// (round-trip), each optionally followed by a precision of 0 to 99. Anything
+// else is treated as a custom picture format.
+//
+// D and X are integral-only in .NET and report [ErrFormat] here.
+func Format(d Decimal, format string) (string, error) {
+	return FormatWith(d, format, Invariant)
 }
 
-// Parse ...
-func Parse(s string) (d Decimal, err error) {
-	// FROM: Number.Parsing.cs:1710
+// FormatWith renders d according to a .NET-style format string, using the
+// symbols and patterns in nf. A nil nf means [Invariant].
+func FormatWith(d Decimal, format string, nf *NumberFormat) (string, error) {
+	nf = nf.orInvariant()
 
-	// Begin a new buffer
-	n := len(s) + 1
-	if n > 29+1+1 {
-		n = 29 + 1 + 1 // 29 for the longest input + 1 for rounding
-	}
-	b := &buffer{Digits: make([]byte, 0, n)}
+	fmtChar, digits := parseFormatSpecifier(format)
 
-	// Parse the string
-	if !parseString(s, b) {
-		err = errors.New("failed to parse string: " + s)
-	}
-
-	// Parse the number
-	if !parseDecimal(b, &d) {
-		err = errors.New("failed to parse decimal: " + s)
-	}
-	return
-}
-
-// TODO: only implemented Number for now: AllowLeadingWhite | AllowTrailingWhite | AllowLeadingSign | AllowTrailingSign | AllowDecimalPoint | AllowThousands
-// TODO: only implemented '.' and ',' for decimal and group separator. Ignoring all other separators for now.
-func parseString(value string, number *buffer) bool {
-	// FROM. Number.Parsing.cs
-
-	// End the number buffer with a zero byte.
-	defer func() { number.Digits = append(number.Digits, 0) }()
-
-	// Special case: empty string
-	if len(value) == 0 {
-		return true
-	}
-
-	const StateSign = 0x0001
-	const StateParens = 0x0002
-	const StateDigits = 0x0004
-	const StateNonZero = 0x0008
-	const StateDecimal = 0x0010
-	const StateCurrency = 0x0020
-
-	var state uint32
-	var dcnt, p, dend int
-	var dmax int = 30
-	var c rune
-	for p, c = range value {
-		switch c {
-		case '+':
-			if (state & StateDecimal) != 0 {
-				return false // sign needs to precede the digits
-			}
-			if (state & StateSign) != 0 {
-				return false // already seen a sign in the string
-			}
-			state |= StateSign
-		case '-':
-			if (state & StateDecimal) != 0 {
-				return false // sign needs to precede the digits
-			}
-			if (state & StateSign) != 0 {
-				return false // already seen a sign in the string
-			}
-			state |= StateSign
-			number.IsNegative = true
-		case '.':
-			if (state & StateDecimal) != 0 {
-				return false // already have a decimal character
-			}
-			state |= StateDecimal
-		case ',':
-			// ignore group separator
-		case 'e', 'E':
-			goto Scientific
-		case ' ', '\t', '\n':
-			// ignore white space
-		case '"', '\'':
-			// ignore quotes
-		default:
-			if c >= '0' && c <= '9' {
-				state |= StateDigits
-				if c != '0' || (state&StateNonZero) != 0 {
-					if dcnt < dmax {
-						number.Digits = append(number.Digits, byte(c))
-						dcnt++
-						if c != '0' {
-							dend = dcnt
-						}
-
-					} else if c != '0' {
-						// For decimal and binary floating-point numbers, we only
-						// need to store digits up to maxDigCount. However, we still
-						// need to keep track of whether any additional digits past
-						// maxDigCount were non-zero, as that can impact rounding
-						// for an input that falls evenly between two representable
-						// results.
-						number.HasNonZeroTail = true
-					}
-
-					if (state & StateDecimal) == 0 {
-						number.Scale++
-					}
-					state |= StateNonZero
-				} else if (state & StateDecimal) != 0 {
-					number.Scale--
-				}
-			} else {
-				break // cannot parse this character for decimal
-			}
-		}
-	}
-
-Scientific:
-	negExp := false
-	number.DigitsCount = int32(dend)
-	if (state & StateDigits) != 0 {
-		if c == 'E' || c == 'e' {
-			var exp int32
-			for p, c = range value[p+1:] {
-				switch c {
-				case '+':
-					// do nothing
-				case '-':
-					negExp = true
-				default:
-					if c >= '0' && c <= '9' {
-						exp = exp*10 + (c - '0')
-					} else {
-						break // unknown character
-					}
-				}
-			}
-			if negExp {
-				exp = -exp
-			}
-			number.Scale += exp
-		}
-	}
-	return true
-}
-
-// NOTE: the `number`, if not empty, will be assumed to have a trailing zero byte to signify the end. This is so the following code matches the c# as closely as possible.
-func parseDecimal(number *buffer, result *Decimal) bool {
-	// FROM: Number.Parsing.cs:1570
-
-	const DecimalPrecision int32 = 29 // FROM: Number.Formatting.cs:245
-
-	// Special case: empty buffer
-	if len(number.Digits) == 0 {
-		*result = Zero
-		return true
-	}
-
-	// Number has been filled, try to parse.
-	var p int // index in the digit slice
-	var e int32 = number.Scale
-	var sign bool = number.IsNegative
-	var c byte // a digit from the slice
-	c = number.Digits[p]
-
-	if c == 0 {
-		// To avoid risking an app-compat issue with pre 4.5 (where some app was illegally using Reflection to examine the internal scale bits), we'll only force
-		// the scale to 0 if the scale was previously positive (previously, such cases were unparsable to a bug.)
-		// TODO: implement this clamping?
-		var flags uint32
-		e = -e
-		if e < 0 {
-			e = 0
-		} else if e > 28 {
-			e = 28
-		}
-		flags = uint32(e) << 16
-		if sign {
-			flags = signMask
-		}
-		*result = Decimal{flags: flags}
-		return true
-	}
-
-	if e > DecimalPrecision {
-		return false
-	}
-
-	var low64 uint64
-	for e > -28 {
-		e--
-		low64 *= 10
-		low64 += uint64(c - '0')
-		p++
-		c = number.Digits[p]
-		if low64 >= math.MaxUint64/10 {
-			break
-		}
-		if c == 0 {
-			for e > 0 {
-				e--
-				low64 *= 10
-				if low64 >= math.MaxUint64/10 {
-					break
-				}
-			}
-			break
-		}
-	}
-
-	var high uint32
-	for (e > 0 || (c != 0 && e > -28)) && (high < math.MaxUint32/10 || (high == math.MaxUint32/10 && (low64 < 0x99999999_99999999 || (low64 == 0x99999999_99999999 && c <= '5')))) {
-
-		// Multiply by 10
-		var tmpLow uint64 = uint64(uint32(low64)) * 10
-		var tmp64 uint64 = uint64(uint32(low64>>32))*10 + (tmpLow >> 32)
-		low64 = uint64(uint32(tmpLow)) + (tmp64 << 32)
-		high = uint32(tmp64>>32) + high*10
-
-		if c != 0 {
-			c -= '0'
-			low64 += uint64(c)
-			if low64 < uint64(c) {
-				high++
-			}
-			p++
-			c = number.Digits[p]
-		}
-		e--
-	}
-
-	if c >= '5' {
-		if (c == '5') && ((low64 & 1) == 0) {
-			p++
-			c = number.Digits[p]
-
-			hasZeroTail := !number.HasNonZeroTail
-
-			// We might still have some additional digits, in which case they need
-			// to be considered as part of hasZeroTail. Some examples of this are:
-			//  * 3.0500000000000000000001e-27
-			//  * 3.05000000000000000000001e-27
-			// In these cases, we will have processed 3 and 0, and ended on 5. The
-			// buffer, however, will still contain a number of trailing zeros and
-			// a trailing non-zero number.
-
-			for (c != 0) && hasZeroTail {
-				hasZeroTail = hasZeroTail && (c == '0')
-				p++
-				c = number.Digits[p]
-			}
-
-			// We should either be at the end of the stream or have a non-zero tail
-			if hasZeroTail {
-				// When the next digit is 5, the number is even, and all following
-				// digits are zero we don't need to round.
-				goto NoRounding
-			}
-		}
-
-		if low64++; low64 == 0 {
-			if high++; high == 0 {
-				low64 = 0x99999999_9999999A
-				high = math.MaxUint32 / 10
-				e++
-			}
-		}
-	}
-
-NoRounding:
-	if e > 0 {
-		return false
-	}
-
-	if e <= -DecimalPrecision {
-		// Parsing a large scale zero can give you more precision than fits in the decimal.
-		// This should only happen for actual zeros or very small numbers that round to zero.
-		*result = newDecimal(0, 0, 0, sign, byte(DecimalPrecision-1))
-	} else {
-		*result = newDecimal(uint32(low64), uint32(low64>>32), high, sign, byte(-e))
-	}
-	return true
-}
-
-// Format the Decimal as a string.
-func Format(d Decimal, format string) (destination string, err error) {
-	// FROM Number.Formatting.cs: 326
-
-	fmt, digits := parseFormatSpecifier(format)
-
-	// Convert the decimal to a number
 	number := new(buffer)
 	decimalToNumber(d, number)
 
-	// Convert number to string
 	sb := new(bytes.Buffer)
-	if fmt != 0 {
-		numberToString(sb, number, fmt, digits)
+	if fmtChar != 0 {
+		if err := numberToString(sb, number, fmtChar, digits, nf); err != nil {
+			return "", err
+		}
 	} else {
-		numberToStringFormat(sb, number, format)
+		numberToStringFormat(sb, number, format, nf)
 	}
 	return sb.String(), nil
+}
+
+// MustFormat is [Format] with the error turned into a panic. It suits format
+// strings fixed at compile time, where a failure is a programming error.
+func MustFormat(d Decimal, format string) string {
+	s, err := Format(d, format)
+	if err != nil {
+		panic(err)
+	}
+	return s
 }
 
 func decimalToNumber(d Decimal, number *buffer) {
@@ -409,76 +137,286 @@ func parseFormatSpecifier(format string) (fmt byte, digits int32) {
 	return 0, digits
 }
 
-// numberToString ...
-func numberToString(sb *bytes.Buffer, number *buffer, format byte, maxDigits int32) {
-	// FROM: Number.Formatting.cs:1582
-
+// numberToString renders a standard format specifier.
+//
+// FROM: Number.Formatting.cs NumberToString
+func numberToString(sb *bytes.Buffer, number *buffer, format byte, maxDigits int32, nf *NumberFormat) error {
 	isCorrectlyRounded := number.Kind == floatingPointKind
 
 	switch format {
-	case 'G', 'g':
-		// decimal
-		noRounding := false
-		if maxDigits < 1 {
-			if maxDigits == -1 {
-				noRounding = true // Turn off rounding for ECMA compliance to output trailing 0's after decimal as significant
-				if number.Digits[0] == 0 {
-					// -0 should be formatted as 0 for decimal. This is normally handled by RoundNumber (which we are skipping)
-					goto SkipSign
-				}
-				goto SkipRounding
-			} else {
-				// This ensures that the PAL code pads out to the correct place even when we use the default precision
-				maxDigits = number.DigitsCount
-			}
+	case 'C', 'c':
+		if maxDigits < 0 {
+			maxDigits = int32(nf.CurrencyDecimalDigits)
 		}
+		// Rounding is relative to the current scale, not to digit position, so
+		// this must not be rewritten in terms of digPos.
+		roundNumber(number, int(number.Scale+maxDigits), isCorrectlyRounded)
+		formatCurrency(sb, number, maxDigits, nf)
 
-		roundNumber(number, int(maxDigits), false) // TODO: since this for decimal only, could round the decimal before converting it to a number.
-
-	SkipRounding:
+	case 'F', 'f':
+		if maxDigits < 0 {
+			maxDigits = int32(nf.NumberDecimalDigits)
+		}
+		roundNumber(number, int(number.Scale+maxDigits), isCorrectlyRounded)
 		if number.IsNegative {
-			sb.WriteByte('-')
+			sb.WriteString(nf.NegativeSign)
 		}
+		formatFixed(sb, number, maxDigits, nil, nf.NumberDecimalSeparator, "")
 
-	SkipSign:
-		formatGeneral(sb, number, maxDigits, byte(format)-('G'-'E'), noRounding)
+	case 'N', 'n':
+		if maxDigits < 0 {
+			maxDigits = int32(nf.NumberDecimalDigits)
+		}
+		roundNumber(number, int(number.Scale+maxDigits), isCorrectlyRounded)
+		formatNumber(sb, number, maxDigits, nf)
 
 	case 'E', 'e':
 		if maxDigits < 0 {
-			maxDigits = 6 // private const int DefaultPrecisionExponentialFormat = 6;
+			maxDigits = defaultPrecisionExponentialFormat
 		}
 		maxDigits++
+		roundNumber(number, int(maxDigits), isCorrectlyRounded)
+		if number.IsNegative {
+			sb.WriteString(nf.NegativeSign)
+		}
+		formatScientific(sb, number, maxDigits, format, nf)
+
+	case 'P', 'p':
+		if maxDigits < 0 {
+			maxDigits = int32(nf.PercentDecimalDigits)
+		}
+		// Percent is the number scaled by 100, so shift the decimal point two
+		// places before rounding.
+		number.Scale += 2
+		roundNumber(number, int(number.Scale+maxDigits), isCorrectlyRounded)
+		formatPercent(sb, number, maxDigits, nf)
+
+	case 'G', 'g', 'R', 'r':
+		// For a decimal, R and G agree: the value is exact, so round-tripping is
+		// what G already does. (.NET Framework threw for R on decimal; .NET Core
+		// does not, and the golden tables follow the current runtime.)
+		expChar := byte('E')
+		if format == 'g' || format == 'r' {
+			expChar = 'e'
+		}
+
+		noRounding := false
+		if maxDigits < 1 {
+			if maxDigits == -1 {
+				// Turn off rounding for ECMA compliance, so trailing zeros after
+				// the decimal point stay significant.
+				noRounding = true
+				if number.Digits[0] == 0 {
+					// -0 formats as 0 for decimal. RoundNumber would normally
+					// handle that, and it is being skipped.
+					goto skipSign
+				}
+				goto skipRounding
+			}
+			// Pad out to the correct place even at the default precision.
+			maxDigits = number.DigitsCount
+		}
 
 		roundNumber(number, int(maxDigits), isCorrectlyRounded)
 
+	skipRounding:
 		if number.IsNegative {
-			sb.WriteByte('-') // info.NegativeSign
+			sb.WriteString(nf.NegativeSign)
 		}
 
-		formatScientific(sb, number, maxDigits, format)
+	skipSign:
+		formatGeneral(sb, number, maxDigits, expChar, noRounding, nf)
 
-	// case 'C', 'c':
-	// 	// currency
-	// 	panic("Currency not implemented")
-	// case 'F', 'f':
-	// 	// fixed
-	// 	panic("Fixed not implemented")
-	// case 'N', 'n':
-	// 	// number
-	// 	panic("Number not implemented")
-	// case 'P', 'p':
-	// 	// percentage
-	// 	panic("Percentage not implemented")
-	// case 'R', 'r':
-	// 	// floating point
-	// 	panic("Floating point not implemented")
 	default:
-		panic("bad format specifier: " + string(format))
+		return fmt.Errorf("%w: %q is not valid for Decimal", ErrFormat, string(format))
+	}
+	return nil
+}
+
+// formatCurrency wraps the number in the culture's currency pattern.
+func formatCurrency(sb *bytes.Buffer, number *buffer, maxDigits int32, nf *NumberFormat) {
+	var p string
+	if number.IsNegative {
+		p = pattern(negCurrencyFormats[:], nf.CurrencyNegativePattern, 0)
+	} else {
+		p = pattern(posCurrencyFormats[:], nf.CurrencyPositivePattern, 0)
+	}
+	for _, ch := range p {
+		switch ch {
+		case '#':
+			formatFixed(sb, number, maxDigits, nf.CurrencyGroupSizes,
+				nf.CurrencyDecimalSeparator, nf.CurrencyGroupSeparator)
+		case '-':
+			sb.WriteString(nf.NegativeSign)
+		case '$':
+			sb.WriteString(nf.CurrencySymbol)
+		default:
+			sb.WriteRune(ch)
+		}
+	}
+}
+
+// formatNumber wraps the number in the culture's number pattern.
+func formatNumber(sb *bytes.Buffer, number *buffer, maxDigits int32, nf *NumberFormat) {
+	p := posNumberFormat
+	if number.IsNegative {
+		p = pattern(negNumberFormats[:], nf.NumberNegativePattern, 1)
+	}
+	for _, ch := range p {
+		switch ch {
+		case '#':
+			formatFixed(sb, number, maxDigits, nf.NumberGroupSizes,
+				nf.NumberDecimalSeparator, nf.NumberGroupSeparator)
+		case '-':
+			sb.WriteString(nf.NegativeSign)
+		default:
+			sb.WriteRune(ch)
+		}
+	}
+}
+
+// formatPercent wraps the number in the culture's percent pattern.
+func formatPercent(sb *bytes.Buffer, number *buffer, maxDigits int32, nf *NumberFormat) {
+	var p string
+	if number.IsNegative {
+		p = pattern(negPercentFormats[:], nf.PercentNegativePattern, 0)
+	} else {
+		p = pattern(posPercentFormats[:], nf.PercentPositivePattern, 0)
+	}
+	for _, ch := range p {
+		switch ch {
+		case '#':
+			formatFixed(sb, number, maxDigits, nf.PercentGroupSizes,
+				nf.PercentDecimalSeparator, nf.PercentGroupSeparator)
+		case '-':
+			sb.WriteString(nf.NegativeSign)
+		case '%':
+			sb.WriteString(nf.PercentSymbol)
+		default:
+			sb.WriteRune(ch)
+		}
+	}
+}
+
+// formatFixed writes the digits in fixed-point notation with exactly maxDigits
+// fractional places, inserting group separators when groupSizes is non-nil.
+//
+// groupSizes holds the size of each group counting outward from the decimal
+// point; the last entry repeats for the remaining groups, and a zero entry
+// disables grouping from that point on.
+//
+// FROM: Number.Formatting.cs FormatFixed
+func formatFixed(sb *bytes.Buffer, number *buffer, maxDigits int32, groupSizes []int, sDecimal, sGroup string) {
+	digPos := number.Scale
+	dig := 0 // index into number.Digits
+
+	// digitAt yields the digit at i, or '0' once the buffer is exhausted.
+	digitAt := func(i int) byte {
+		if i < len(number.Digits) && number.Digits[i] != 0 {
+			return number.Digits[i]
+		}
+		return '0'
+	}
+
+	if digPos > 0 {
+		if groupSizes != nil {
+			// Work out where the separators land, then emit right to left so each
+			// group is measured from the decimal point outward.
+			groupSize := 0
+			if len(groupSizes) != 0 {
+				groupSizeIndex := 0
+				groupSizeCount := groupSizes[groupSizeIndex]
+				for digPos > int32(groupSizeCount) {
+					groupSize = groupSizes[groupSizeIndex]
+					if groupSize == 0 {
+						break
+					}
+					if groupSizeIndex < len(groupSizes)-1 {
+						groupSizeIndex++
+					}
+					groupSizeCount += groupSizes[groupSizeIndex]
+				}
+				if groupSizeCount == 0 {
+					// An array whose entries are all zero disables grouping.
+					groupSize = 0
+				} else {
+					groupSize = groupSizes[0]
+				}
+			}
+
+			digLength := number.DigitsCount
+			digStart := digPos
+			if digLength < digStart {
+				digStart = digLength
+			}
+
+			out := make([]byte, 0, int(digPos)+len(sGroup)*int(digPos))
+			groupSizeIndex := 0
+			digitCount := 0
+			for i := digPos - 1; i >= 0; i-- {
+				if i < digStart {
+					out = append(out, digitAt(int(i)))
+				} else {
+					out = append(out, '0')
+				}
+
+				if groupSize > 0 {
+					digitCount++
+					if digitCount == groupSize && i != 0 {
+						for j := len(sGroup) - 1; j >= 0; j-- {
+							out = append(out, sGroup[j])
+						}
+						if groupSizeIndex < len(groupSizes)-1 {
+							groupSizeIndex++
+							groupSize = groupSizes[groupSizeIndex]
+						}
+						digitCount = 0
+					}
+				}
+			}
+			for i := len(out) - 1; i >= 0; i-- {
+				sb.WriteByte(out[i])
+			}
+			dig = int(digStart)
+		} else {
+			for {
+				sb.WriteByte(digitAt(dig))
+				if dig < len(number.Digits) && number.Digits[dig] != 0 {
+					dig++
+				}
+				if digPos--; digPos <= 0 {
+					break
+				}
+			}
+		}
+	} else {
+		sb.WriteByte('0')
+	}
+
+	if maxDigits > 0 {
+		sb.WriteString(sDecimal)
+		if digPos < 0 {
+			zeroes := -digPos
+			if maxDigits < zeroes {
+				zeroes = maxDigits
+			}
+			for i := int32(0); i < zeroes; i++ {
+				sb.WriteByte('0')
+			}
+			digPos += zeroes
+			maxDigits -= zeroes
+		}
+		for ; maxDigits > 0; maxDigits-- {
+			sb.WriteByte(digitAt(dig))
+			if dig < len(number.Digits) && number.Digits[dig] != 0 {
+				dig++
+			}
+		}
 	}
 }
 
 // numberToStringFormat ...
-func numberToStringFormat(sb *bytes.Buffer, number *buffer, format string) {
+func numberToStringFormat(sb *bytes.Buffer, number *buffer, format string, nf *NumberFormat) {
 
 	var digitCount, decimalPos, firstDigit, lastDigit, digPos, thousandPos, thousandCount, scaleAdjust, adjust, section, src int32
 	var scientific, thousandSeps bool
@@ -509,6 +447,13 @@ func numberToStringFormat(sb *bytes.Buffer, number *buffer, format string) {
 		src = section
 
 		for src < int32(len(format)) {
+			// U+2030 is three bytes in UTF-8, so it has to be matched before the
+			// byte-wise switch below can mistake its lead byte for something else.
+			if hasPrefixAt(format, src, perMilleUTF8) {
+				src += int32(len(perMilleUTF8))
+				scaleAdjust += 3
+				continue
+			}
 			ch = format[src]
 			src++
 			if ch == 0 || ch == ';' {
@@ -541,22 +486,38 @@ func numberToStringFormat(sb *bytes.Buffer, number *buffer, format string) {
 				}
 			case '%':
 				scaleAdjust += 2
-			// case '\x2030':
-			// 	scaleAdjust += 3
 			case '\'', '"':
-				for src < int32(len(format)) && format[src] != 0 && format[src] != ch {
+				// The reference advances past the closing quote as part of the
+				// test (`pFormat[src++] != ch`). Stopping on the quote instead
+				// leaves it to be read as the start of a second quoted run, which
+				// swallows whatever follows it.
+				for src < int32(len(format)) && format[src] != 0 {
+					q := format[src]
+					src++
+					if q == ch {
+						break
+					}
+				}
+			case '\\':
+				// An escaped character is a literal and must not be counted as a
+				// digit placeholder. Without this case, `\#0` scans as one '#'
+				// placeholder plus a '0' placeholder rather than a literal '#'
+				// followed by one placeholder.
+				if src < int32(len(format)) && format[src] != 0 {
 					src++
 				}
 			case 'E', 'e':
-				if (src < int32(len(format)) && format[src] == 0) ||
-					(src+1 < int32(len(format))) && (format[src] == '+' || format[src] == '-') && format[src+1] == '0' {
+				// The look-ahead is for the character '0', not for a NUL. Testing
+				// against 0 means scientific notation is never detected, so "0E0"
+				// renders as a literal E.
+				if (src < int32(len(format)) && format[src] == '0') ||
+					(src+1 < int32(len(format)) && (format[src] == '+' || format[src] == '-') && format[src+1] == '0') {
 					src++
 					for src < int32(len(format)) && format[src] == '0' {
 						src++
 					}
 					scientific = true
 				}
-
 			}
 		}
 
@@ -630,7 +591,7 @@ func numberToStringFormat(sb *bytes.Buffer, number *buffer, format string) {
 	var thousandsSepCtr int32 = -1
 	if thousandSeps {
 		// We need to precompute this outside the number formatting loop
-		if true { // info.NumberGroupSeparator.Length > 0
+		if len(nf.NumberGroupSeparator) > 0 {
 			// We need this array to figure out where to insert the thousands separator. We would have to traverse the string
 			// backwards. PIC formatting always traverses forwards. These indices are precomputed to tell us where to insert
 			// the thousands separator so we can get away with traversing forwards. Note we only have to compute up to digPos.
@@ -674,12 +635,17 @@ func numberToStringFormat(sb *bytes.Buffer, number *buffer, format string) {
 	}
 
 	if number.IsNegative && section == 0 && number.Scale != 0 {
-		sb.WriteByte('-') // info.NegativeSign
+		sb.WriteString(nf.NegativeSign)
 	}
 
 	decimalWritten := false
 	cur := 0
 	for src < int32(len(format)) {
+		if hasPrefixAt(format, src, perMilleUTF8) {
+			src += int32(len(perMilleUTF8))
+			sb.WriteString(perMilleUTF8)
+			continue
+		}
 		ch = format[src]
 		src++
 		if ch == 0 || ch == ';' {
@@ -700,7 +666,7 @@ func numberToStringFormat(sb *bytes.Buffer, number *buffer, format string) {
 					}
 					if thousandSeps && digPos > 1 && thousandsSepCtr >= 0 {
 						if digPos == thousandSepPos[thousandsSepCtr]+1 {
-							sb.WriteByte(',') // info.NumberGroupSeparator
+							sb.WriteString(nf.NumberGroupSeparator)
 							thousandsSepCtr--
 						}
 					}
@@ -735,7 +701,7 @@ func numberToStringFormat(sb *bytes.Buffer, number *buffer, format string) {
 				sb.WriteByte(ch)
 				if thousandSeps && digPos > 1 && thousandsSepCtr >= 0 {
 					if digPos == thousandSepPos[thousandsSepCtr]+1 {
-						sb.WriteByte(',') // info.NumberGroupSeparator
+						sb.WriteString(nf.NumberGroupSeparator)
 						thousandsSepCtr--
 					}
 				}
@@ -748,14 +714,11 @@ func numberToStringFormat(sb *bytes.Buffer, number *buffer, format string) {
 			}
 			// If the format has trailing zeros or the format has a decimal and digits remain
 			if lastDigit < 0 || (decimalPos < digitCount && dig[cur] != 0) {
-				sb.WriteByte('.') // info.NumberDecimalSeparator
+				sb.WriteString(nf.NumberDecimalSeparator)
 				decimalWritten = true
 			}
-		// case '\x2030':
-		// 	sb.Append(info.PerMilleSymbol);
-		// 	break;
 		case '%':
-			sb.WriteByte('%') // info.PercentSymbol
+			sb.WriteString(nf.PercentSymbol)
 		case ',':
 			break
 		case '\'', '"':
@@ -775,7 +738,11 @@ func numberToStringFormat(sb *bytes.Buffer, number *buffer, format string) {
 			positiveSign := false
 			var i int32 = 0
 			if scientific {
-				if src < int32(len(format)) && format[src] == 0 {
+				// The comparison is against the character '0', not against NUL --
+				// the same mistranslation as in the scanning pass. Testing for 0
+				// sends "0E0" down the literal path, which emits the E and drops
+				// the exponent digits.
+				if src < int32(len(format)) && format[src] == '0' {
 					// Handles E0, which should format the same as E-0
 					i++
 				} else if src+1 < int32(len(format)) && format[src] == '+' && format[src+1] == '0' {
@@ -801,7 +768,7 @@ func numberToStringFormat(sb *bytes.Buffer, number *buffer, format string) {
 				} else {
 					exp = number.Scale - decimalPos
 				}
-				formatExponent(sb, exp, ch, i, positiveSign)
+				formatExponent(sb, exp, ch, i, positiveSign, nf)
 				scientific = false
 			} else {
 				sb.WriteByte(ch) // Copy E or e to output
@@ -822,12 +789,14 @@ func numberToStringFormat(sb *bytes.Buffer, number *buffer, format string) {
 	}
 
 	if number.IsNegative && section == 0 && number.Scale == 0 && sb.Len() > 0 {
-		tmp := sb.Bytes()
+		// The reference does sb.Insert(0, NegativeSign). Doing it by hand needs a
+		// copy first: sb.Bytes() aliases the buffer's array, and Reset only sets
+		// the length to zero, so writing the sign back overwrites the very bytes
+		// still being read out.
+		body := append([]byte(nil), sb.Bytes()...)
 		sb.Reset()
-		sb.WriteByte('-') // NegativeSign
-		for _, b := range tmp {
-			sb.WriteByte(b)
-		}
+		sb.WriteString(nf.NegativeSign)
+		sb.Write(body)
 	}
 }
 
@@ -874,7 +843,7 @@ func findSection(format string, section int32) int32 {
 }
 
 // formatScientific ...
-func formatScientific(sb *bytes.Buffer, number *buffer, maxDigits int32, expChar byte) {
+func formatScientific(sb *bytes.Buffer, number *buffer, maxDigits int32, expChar byte, nf *NumberFormat) {
 	var dig int
 	if number.Digits[dig] != 0 {
 		sb.WriteByte(number.Digits[dig])
@@ -884,7 +853,7 @@ func formatScientific(sb *bytes.Buffer, number *buffer, maxDigits int32, expChar
 	}
 
 	if maxDigits != 1 { //For E0 we would like to suppress the decimal point
-		sb.WriteByte('.') // info.NumberDecimalSeparator
+		sb.WriteString(nf.NumberDecimalSeparator)
 	}
 
 	for maxDigits--; maxDigits > 0; maxDigits-- {
@@ -902,21 +871,19 @@ func formatScientific(sb *bytes.Buffer, number *buffer, maxDigits int32, expChar
 	} else {
 		e = number.Scale - 1
 	}
-	formatExponent(sb, e, expChar, 3, true)
+	formatExponent(sb, e, expChar, 3, true, nf)
 }
 
 // formatExponent ...
-func formatExponent(sb *bytes.Buffer, value int32, expChar byte, minDigits int32, positiveSign bool) {
+func formatExponent(sb *bytes.Buffer, value int32, expChar byte, minDigits int32, positiveSign bool, nf *NumberFormat) {
 	// FROM: Number.Formatting.cs:2253
 	sb.WriteByte(expChar)
 
 	if value < 0 {
-		sb.WriteByte('-') // info.NegativeSign
+		sb.WriteString(nf.NegativeSign)
 		value = -value
-	} else {
-		if positiveSign {
-			sb.WriteByte('+') // info.PositiveSign
-		}
+	} else if positiveSign {
+		sb.WriteString(nf.PositiveSign)
 	}
 
 	digits := new(bytes.Buffer)
@@ -925,7 +892,7 @@ func formatExponent(sb *bytes.Buffer, value int32, expChar byte, minDigits int32
 }
 
 // formatGeneral ...
-func formatGeneral(sb *bytes.Buffer, number *buffer, maxDigits int32, expChar byte, suppressScientific bool) {
+func formatGeneral(sb *bytes.Buffer, number *buffer, maxDigits int32, expChar byte, suppressScientific bool, nf *NumberFormat) {
 	// FROM: Number.Formatting.cs:2273
 
 	digPos := number.Scale
@@ -955,7 +922,7 @@ func formatGeneral(sb *bytes.Buffer, number *buffer, maxDigits int32, expChar by
 	}
 
 	if number.Digits[dig] != 0 || digPos < 0 {
-		sb.WriteByte('.') // info.NumberDecimalSeparator
+		sb.WriteString(nf.NumberDecimalSeparator)
 
 		for digPos < 0 {
 			sb.WriteByte('0')
@@ -969,39 +936,52 @@ func formatGeneral(sb *bytes.Buffer, number *buffer, maxDigits int32, expChar by
 	}
 
 	if scientific {
-		formatExponent(sb, number.Scale-1, expChar, 2, true)
+		formatExponent(sb, number.Scale-1, expChar, 2, true, nf)
 	}
 }
 
 // roundNumber ...
 func roundNumber(number *buffer, pos int, isCorrectlyRounded bool) {
-	var dig byte
+	dig := number.Digits
 	var i int
-	for i < pos && number.Digits[i] != 0 {
+	for i < pos && i < len(dig) && dig[i] != 0 {
 		i++
 	}
 
-	if i == pos && shouldRoundUp(dig, isCorrectlyRounded) {
-		for i > 0 && number.Digits[i-1] == '9' {
+	// The digit at the rounding position decides. The reference reads dig[i]
+	// here; passing a zero-valued local instead means shouldRoundUp always takes
+	// its "digit is 0" fast path and nothing is ever rounded up.
+	var atPos byte
+	if i < len(dig) {
+		atPos = dig[i]
+	}
+
+	if i == pos && shouldRoundUp(atPos, isCorrectlyRounded) {
+		for i > 0 && dig[i-1] == '9' {
 			i--
 		}
 		if i > 0 {
-			number.Digits[i-1]++
+			dig[i-1]++
 		} else {
 			number.Scale++
-			number.Digits[0] = '1'
+			dig[0] = '1'
 			i = 1
 		}
 	} else {
-		for i > 0 && number.Digits[i-1] == '0' {
+		for i > 0 && dig[i-1] == '0' {
 			i--
 		}
 	}
 
 	if i == 0 {
+		// Everything rounded away. The reference resets the scale here, and also
+		// drops the sign so that -0.4 formatted to zero places is "0", not "-0".
 		number.Scale = 0
+		number.IsNegative = false
 	}
-	number.Digits[i] = 0
+	if i < len(dig) {
+		dig[i] = 0
+	}
 	number.DigitsCount = int32(i)
 }
 
@@ -1083,4 +1063,9 @@ func reverseString(sb *bytes.Buffer) string {
 		utf8.EncodeRune(buf[size-start:], r)
 	}
 	return string(buf)
+}
+
+// hasPrefixAt reports whether s contains prefix starting at byte offset i.
+func hasPrefixAt(s string, i int32, prefix string) bool {
+	return i >= 0 && int(i)+len(prefix) <= len(s) && s[i:int(i)+len(prefix)] == prefix
 }
