@@ -61,8 +61,10 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: stable
-      - name: build
-        run: GOOS=linux GOARCH=${{ matrix.goarch }} go build ./...
+      # vet, not build: build skips _test.go, so a test that does not compile
+      # on this target would go unnoticed on the architectures we cannot run.
+      - name: build and type-check
+        run: GOOS=linux GOARCH=${{ matrix.goarch }} go vet ./...
       - name: test
         if: matrix.run
         run: GOOS=linux GOARCH=${{ matrix.goarch }} go test ./...
@@ -99,7 +101,7 @@ jobs:
         run: |
           out="$(gofmt -l .)"
           if [ -n "$out" ]; then echo "gofmt needed:"; echo "$out"; exit 1; fi
-      - uses: golangci/golangci-lint-action@v6
+      - uses: golangci/golangci-lint-action@v7
         with:
           # Pinned so a new release cannot turn a green branch red on its own.
           version: v2.13.1

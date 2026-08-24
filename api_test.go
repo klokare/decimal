@@ -65,10 +65,12 @@ func TestIntAndUint(t *testing.T) {
 	_, err = MinusOne.UintE()
 	assert.ErrorIs(t, err, ErrOverflow, "UintE of a negative")
 
-	// Int and Uint follow the platform width.
-	if bits := ^uint(0) >> 63; bits == 1 {
-		assert.Equal(t, int(math.MinInt64), FromInt(math.MinInt64).Int(), "64-bit Int")
-	}
+	// Int and Uint follow the platform width, so the boundary to check is the
+	// platform's own. Guarding a 64-bit literal behind a runtime check does not
+	// work: Go type-checks both branches, so the constant still has to fit.
+	assert.Equal(t, math.MinInt, FromInt(math.MinInt).Int(), "platform int minimum")
+	assert.Equal(t, math.MaxInt, FromInt(math.MaxInt).Int(), "platform int maximum")
+	assert.Equal(t, uint(math.MaxUint), FromUint(uint(math.MaxUint)).Uint(), "platform uint maximum")
 }
 
 func TestOACurrency(t *testing.T) {

@@ -56,12 +56,16 @@ testdata-check: testdata
 		{ echo "testdata/ changed; commit the regenerated tables"; exit 1; }
 
 # Every architecture the package claims to support.
+#
+# Uses vet rather than build: build ignores _test.go files, so a test that does
+# not compile on a 32-bit target -- an untyped constant inferring int, say --
+# slips through and only fails in CI. vet type-checks the tests too.
 cross:
 	@for arch in 386 amd64 arm arm64 loong64 mips mips64 mipsle ppc64 ppc64le riscv64 s390x; do \
 		printf '%-10s' $$arch; \
-		GOOS=linux GOARCH=$$arch $(GO) build $(PKG) && echo ok || exit 1; \
+		GOOS=linux GOARCH=$$arch $(GO) vet $(PKG) && echo ok || exit 1; \
 	done
-	@printf '%-10s' wasm; GOOS=js GOARCH=wasm $(GO) build $(PKG) && echo ok
+	@printf '%-10s' wasm; GOOS=js GOARCH=wasm $(GO) vet $(PKG) && echo ok
 
 clean:
 	$(GO) clean -testcache

@@ -163,9 +163,11 @@ func TestDivideByZero(t *testing.T) {
 // The integer conversions rely on wrapping arithmetic at the extremes; these are
 // the values where a sign test done the obvious way gets it wrong.
 func TestConversionExtremes(t *testing.T) {
-	assert.Equal(t, int32(math.MinInt32), FromInt(math.MinInt32).Int32(), "int32 minimum round-trips")
-	assert.Equal(t, int64(math.MinInt64), FromInt(math.MinInt64).Int64(), "int64 minimum round-trips")
-	assert.Equal(t, int32(math.MaxInt32), FromInt(math.MaxInt32).Int32(), "int32 maximum")
+	// The argument types are explicit: an untyped constant infers int, which is
+	// 32 bits on a 32-bit target, so FromInt(math.MinInt64) will not compile there.
+	assert.Equal(t, int32(math.MinInt32), FromInt(int32(math.MinInt32)).Int32(), "int32 minimum round-trips")
+	assert.Equal(t, int64(math.MinInt64), FromInt(int64(math.MinInt64)).Int64(), "int64 minimum round-trips")
+	assert.Equal(t, int32(math.MaxInt32), FromInt(int32(math.MaxInt32)).Int32(), "int32 maximum")
 	assert.Equal(t, uint64(math.MaxUint64), FromUint(uint64(math.MaxUint64)).Uint64(), "uint64 maximum")
 
 	// One past each boundary must fail.
