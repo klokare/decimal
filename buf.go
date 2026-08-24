@@ -80,20 +80,10 @@ func (b *buf24) SetLow64(value uint64) {
 	b.U0 = uint32(value)
 }
 
-// Mid64 ...
-func (b buf24) Mid64() uint64 {
-	return uint64(b.U3)<<32 | uint64(b.U2)
-}
-
 // SetMid64 ...
 func (b *buf24) SetMid64(value uint64) {
 	b.U3 = uint32(value >> 32)
 	b.U2 = uint32(value)
-}
-
-// High64 ...
-func (b buf24) High64() uint64 {
-	return uint64(b.U5)<<32 | uint64(b.U4)
 }
 
 // SetHigh64 ...
@@ -102,14 +92,8 @@ func (b *buf24) SetHigh64(value uint64) {
 	b.U4 = uint32(value)
 }
 
-// Length ...
-func (b buf24) Length() int32 { return 6 }
-
 // buf28 ...
 type buf28 struct {
 	buf24
 	U6 uint32
 }
-
-// Length ...
-func (b buf28) Length() int32 { return 7 }
