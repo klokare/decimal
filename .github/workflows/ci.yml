@@ -1,0 +1,133 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: test (go ${{ matrix.go }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        go: ['1.21', 'stable']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ matrix.go }}
+      - run: go build ./...
+      - run: go test ./...
+      - run: go test -race ./...
+      # Validates the uint32 struct-to-array aliasing the arithmetic core uses.
+      - run: go test -gcflags=all=-d=checkptr ./...
+
+  # The 32-bit division path and the big-endian word accessors cannot be
+  # exercised on the developer's machine, so they are covered here.
+  arch:
+    name: ${{ matrix.goarch }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - goarch: '386'
+            run: true      # runs natively on an amd64 host
+          - goarch: arm
+            run: false
+          - goarch: arm64
+            run: false
+          - goarch: loong64
+            run: false
+          - goarch: mips
+            run: false     # big-endian
+          - goarch: mips64
+            run: false     # big-endian
+          - goarch: ppc64
+            run: false     # big-endian
+          - goarch: ppc64le
+            run: false
+          - goarch: riscv64
+            run: false
+          - goarch: s390x
+            run: false     # big-endian
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+      - name: build
+        run: GOOS=linux GOARCH=${{ matrix.goarch }} go build ./...
+      - name: test
+        if: matrix.run
+        run: GOOS=linux GOARCH=${{ matrix.goarch }} go test ./...
+
+  # Big-endian is where the word accessors differ, so run the suite under
+  # emulation rather than only compiling it.
+  bigendian:
+    name: s390x (emulated)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+      - uses: docker/setup-qemu-action@v3
+        with:
+          platforms: s390x
+      - name: test under qemu
+        run: |
+          GOOS=linux GOARCH=s390x go test -c -o decimal.s390x.test .
+          docker run --rm --platform linux/s390x \
+            -v "$PWD:/w" -w /w s390x/alpine:latest \
+            ./decimal.s390x.test -test.v
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+      - run: go vet ./...
+      - name: gofmt
+        run: |
+          out="$(gofmt -l .)"
+          if [ -n "$out" ]; then echo "gofmt needed:"; echo "$out"; exit 1; fi
+      - uses: golangci/golangci-lint-action@v6
+        with:
+          version: latest
+
+  # The golden tables must match what the installed .NET produces. A diff here
+  # means either the Go side and .NET have diverged, or the generator is not
+  # deterministic.
+  testdata:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '9.0.x'
+      - run: make testdata
+      - name: tables unchanged
+        run: git diff --exit-code testdata/
+
+  fuzz:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+      - run: go test -run=NONE -fuzz=FuzzParse -fuzztime=60s .
+      - run: go test -run=NONE -fuzz=FuzzFormat -fuzztime=60s .
+      - run: go test -run=NONE -fuzz=FuzzArithmetic -fuzztime=60s .
+      - run: go test -run=NONE -fuzz=FuzzJSON -fuzztime=60s .

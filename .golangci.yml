@@ -1,0 +1,37 @@
+version: "2"
+
+linters:
+  enable:
+    - errcheck
+    - govet
+    - ineffassign
+    - misspell      # the port arrived carrying "excpetion" in four places
+    - revive
+    - staticcheck
+    - unused
+
+  settings:
+    misspell:
+      locale: UK
+    revive:
+      rules:
+        - name: exported
+        - name: package-comments
+        - name: var-naming
+        - name: indent-error-flow
+
+  exclusions:
+    rules:
+      # calc.go is a deliberate line-by-line port of .NET's DecCalc. Keeping it
+      # recognisable against the reference is worth more than satisfying style
+      # rules about naming and control flow, and the golden tables are what
+      # actually holds it correct.
+      - path: calc\.go
+        linters: [revive, staticcheck]
+      # The custom-format writer is likewise a direct port.
+      - path: format\.go
+        text: "cyclomatic|cognitive"
+
+formatters:
+  enable:
+    - gofmt
